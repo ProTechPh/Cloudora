@@ -5,15 +5,9 @@ import 'package:package_info_plus/package_info_plus.dart';
 abstract final class AppConfig {
   static const String appName = 'Cloudora';
 
-  /// The app's Telegram API credentials. Can be overridden with `--dart-define=TELEGRAM_API_ID=...`.
-  static const int telegramApiId = int.fromEnvironment(
-    'TELEGRAM_API_ID',
-    defaultValue: 38215567,
-  );
-  static const String telegramApiHash = String.fromEnvironment(
-    'TELEGRAM_API_HASH',
-    defaultValue: '39ac62fa38d64193a904b1080709e97e',
-  );
+  /// The app's Telegram API credentials, passed via `--dart-define=TELEGRAM_API_ID=...`.
+  static const int telegramApiId = int.fromEnvironment('TELEGRAM_API_ID');
+  static const String telegramApiHash = String.fromEnvironment('TELEGRAM_API_HASH');
 
   /// What the GNU GPL asks an interactive program to show: who holds the
   /// copyright, that there is no warranty, and the license, which the

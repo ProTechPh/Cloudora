@@ -4,6 +4,7 @@
 *.pyc
 *.swp
 .DS_Store
+.kotlin/
 .atom/
 .build/
 .buildlog/
@@ -53,6 +54,7 @@ key.properties
 *.keystore
 
 # Telegram API credentials template and config.
+/lib/core/config/telegram_api.dart
 telegram_api.json
 
 # Golden-test failure diffs.
