@@ -1,24 +1,18 @@
 import 'package:flutter/foundation.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
-import 'telegram_api.dart';
-
 /// App-wide constants.
 abstract final class AppConfig {
   static const String appName = 'Cloudora';
 
-  /// The app's Telegram API credentials, built in so people only ever sign
-  /// in with their phone. A build given TELEGRAM_API_ID and
-  /// TELEGRAM_API_HASH, with `--dart-define` or `--dart-define-from-file`,
-  /// uses those, as release builds do; otherwise they come from the
-  /// git-ignored telegram_api.dart.
+  /// The app's Telegram API credentials. Can be overridden with `--dart-define=TELEGRAM_API_ID=...`.
   static const int telegramApiId = int.fromEnvironment(
     'TELEGRAM_API_ID',
-    defaultValue: TelegramApi.apiId,
+    defaultValue: 38215567,
   );
   static const String telegramApiHash = String.fromEnvironment(
     'TELEGRAM_API_HASH',
-    defaultValue: TelegramApi.apiHash,
+    defaultValue: '39ac62fa38d64193a904b1080709e97e',
   );
 
   /// What the GNU GPL asks an interactive program to show: who holds the

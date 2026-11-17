@@ -32,6 +32,16 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Ensure Telegram API template exists
+        run: |
+          mkdir -p lib/core/config
+          cat << 'EOF' > lib/core/config/telegram_api.dart
+          abstract final class TelegramApi {
+            static const int apiId = 38215567;
+            static const String apiHash = '39ac62fa38d64193a904b1080709e97e';
+          }
+          EOF
+
       - name: Build Android APK
         env:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
