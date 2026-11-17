@@ -72,7 +72,7 @@ between them.
 These colours and their shading belong to the mark alone; the UI keeps its
 one accent and no gradients.
 
-- The artwork is `tool/icon/source/telegrive.png`. `tool/icon` renders
+- The artwork is `tool/icon/source/cloudora.png`. `tool/icon` renders
   every picture of it from that file: the app's own copy for `BrandMark`
   (`assets/brand/mark.png`), the launcher icons, the notification icon and
   the channel photo.

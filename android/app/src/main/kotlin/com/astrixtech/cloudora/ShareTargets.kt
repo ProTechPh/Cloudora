@@ -1,4 +1,4 @@
-package dev.ragoose.telegrive
+package com.astrixtech.cloudora
 
 import android.content.Context
 import android.content.Intent
@@ -15,7 +15,7 @@ import androidx.core.graphics.drawable.IconCompat
  */
 object ShareTargets {
     /** The share-target category in res/xml/shortcuts.xml. */
-    const val CATEGORY = "dev.ragoose.telegrive.category.FOLDER"
+    const val CATEGORY = "com.astrixtech.cloudora.category.FOLDER"
 
     /** Starts the id of every shortcut that stands for a folder. */
     const val PREFIX = "folder:"

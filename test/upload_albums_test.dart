@@ -76,7 +76,7 @@ void main() {
   late TransferQueue queue;
 
   setUp(() async {
-    dir = await Directory.systemTemp.createTemp('telegrive_albums');
+    dir = await Directory.systemTemp.createTemp('cloudora_albums');
     db = AppDatabase(NativeDatabase.memory());
     telegram = _UploadTelegram();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

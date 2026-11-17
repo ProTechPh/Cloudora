@@ -123,7 +123,7 @@ void main() {
   setUp(() async {
     // ignore: invalid_use_of_visible_for_testing_member
     SharedPreferences.setMockInitialValues({});
-    support = await Directory.systemTemp.createTemp('telegrive_configure');
+    support = await Directory.systemTemp.createTemp('cloudora_configure');
     kept = File('${support.path}/tdlib/db/td.binlog');
     await kept.create(recursive: true);
     paths = PathProviderPlatform.instance;

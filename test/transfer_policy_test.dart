@@ -164,7 +164,7 @@ void main() {
     late AppDatabase db;
 
     setUp(() async {
-      dir = await Directory.systemTemp.createTemp('telegrive_policy');
+      dir = await Directory.systemTemp.createTemp('cloudora_policy');
       db = AppDatabase(NativeDatabase.memory());
     });
 

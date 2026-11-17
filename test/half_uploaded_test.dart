@@ -68,7 +68,7 @@ void main() {
   late Directory dir;
   late AppDatabase db;
   setUp(() async {
-    dir = await Directory.systemTemp.createTemp('telegrive_half');
+    dir = await Directory.systemTemp.createTemp('cloudora_half');
     db = AppDatabase(NativeDatabase.memory());
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
       const MethodChannel('plugins.flutter.io/path_provider'),

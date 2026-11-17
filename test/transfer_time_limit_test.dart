@@ -116,7 +116,7 @@ void main() {
     final now = DateTime(2026, 10, 15);
 
     setUp(() async {
-      dir = await Directory.systemTemp.createTemp('telegrive_time_limit');
+      dir = await Directory.systemTemp.createTemp('cloudora_time_limit');
       db = AppDatabase(NativeDatabase.memory());
       fetched = File('${dir.path}/fetched.bin')..writeAsStringSync('0123456789');
       for (final (id, tdFileId) in [('report', 7), ('notes', 8)]) {

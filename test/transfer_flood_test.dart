@@ -154,7 +154,7 @@ void main() {
   final now = DateTime(2026, 9, 26);
 
   setUp(() async {
-    dir = await Directory.systemTemp.createTemp('telegrive_flood');
+    dir = await Directory.systemTemp.createTemp('cloudora_flood');
     held = [];
     db = AppDatabase(NativeDatabase.memory());
     TransferQueue.waitUnit = const Duration(milliseconds: 1);

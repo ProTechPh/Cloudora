@@ -117,8 +117,8 @@
         </provider>
         <!-- The one-colour mark flutter_foreground_task's notification shows. -->
         <meta-data
-            android:name="dev.ragoose.telegrive.STAT_ICON"
-            android:resource="@drawable/ic_stat_telegrive" />
+            android:name="com.astrixtech.cloudora.STAT_ICON"
+            android:resource="@drawable/ic_stat_cloudora" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

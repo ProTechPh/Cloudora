@@ -29,7 +29,7 @@ typedef IndexContents = ({
 /// reinstall, opens a big drive at once instead of after reading every
 /// message.
 ///
-/// The copy is one document, `telegrive-index.json.gz`, captioned with an
+/// The copy is one document, `cloudora-index.json.gz`, captioned with an
 /// [IndexRecord], and the pinned drive message points to it. Each new copy
 /// replaces the document in the same message. It is only a head start:
 /// the captions stay what the drive is, so a phone that opens from a copy
@@ -50,7 +50,7 @@ class IndexCopies {
   static const int format = 2;
 
   static const Duration interval = Duration(days: 3);
-  static const String fileName = 'telegrive-index.json.gz';
+  static const String fileName = 'cloudora-index.json.gz';
 
   /// The biggest copy that goes over a metered connection. A drive of a
   /// few thousand files makes a copy of a few hundred kilobytes.

@@ -44,7 +44,7 @@ class AppLockState {
 /// drive: when the app starts, and when it comes back after [LockAfter].
 /// Uses the phone's own lock, so there is no separate PIN to forget.
 class AppLock extends Notifier<AppLockState> with WidgetsBindingObserver {
-  static const _security = MethodChannel('telegrive/security');
+  static const _security = MethodChannel('cloudora/security');
 
   final _auth = LocalAuthentication();
   DateTime? _leftAt;

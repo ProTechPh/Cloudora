@@ -1,4 +1,4 @@
-package dev.ragoose.telegrive.picker
+package com.astrixtech.cloudora.picker
 
 import android.content.Context
 import android.net.Uri
@@ -65,7 +65,7 @@ object BridgeReader {
         null
     }
 
-    /** Whether [endpoint]'s server answers, so Telegrive is running with the drive open. */
+    /** Whether [endpoint]'s server answers, so Cloudora is running with the drive open. */
     @Synchronized
     fun alive(endpoint: Endpoint): Boolean {
         val now = SystemClock.elapsedRealtime()
@@ -222,7 +222,7 @@ object BridgeReader {
                 out.close()
             } catch (e: IOException) {
                 try {
-                    write.closeWithError("Telegrive stopped sending $name")
+                    write.closeWithError("Cloudora stopped sending $name")
                 } catch (closing: IOException) {
                     // The reading app has gone already.
                 }

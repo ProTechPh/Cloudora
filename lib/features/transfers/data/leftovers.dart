@@ -9,11 +9,11 @@ import 'package:path_provider/path_provider.dart';
 /// from the watched phone folders, and files fetched to make a preview of.
 /// Anything in them that no transfer or share still needs is a leftover.
 const leftoverDirs = [
-  'telegrive-staging',
-  'telegrive-parts',
-  'telegrive-thumbs',
-  'telegrive-album-thumbs',
-  'telegrive-small',
+  'cloudora-staging',
+  'cloudora-parts',
+  'cloudora-thumbs',
+  'cloudora-album-thumbs',
+  'cloudora-small',
   'file_picker',
   'shared',
   'captured',
@@ -24,7 +24,7 @@ const leftoverDirs = [
 
 /// Files in the app's cache that only setting up the drive needs: the
 /// channel photo handed to Telegram.
-const leftoverFiles = ['telegrive-channel-photo.jpg'];
+const leftoverFiles = ['cloudora-channel-photo.jpg'];
 
 /// Where the app's own copies of files are: its cache, where it makes them
 /// itself, and on iOS its temporary folder, where the photo library and

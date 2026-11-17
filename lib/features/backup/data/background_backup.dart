@@ -27,7 +27,7 @@ import 'backup_worker.dart';
 /// it to hand over, and it does so at once. Photos left at the end make
 /// Android run it again later.
 abstract final class BackgroundBackup {
-  static const String runTask = 'telegrive.backup-run';
+  static const String runTask = 'cloudora.backup-run';
 
   /// Setting up and the pass, from the job's start. With the grace for
   /// uploads under way and closing TDLib after, the job stays inside the

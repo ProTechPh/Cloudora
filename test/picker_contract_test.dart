@@ -10,10 +10,10 @@ import 'package:cloudora/infrastructure/database/app_database.dart';
 /// SQL, so nothing in Dart would notice the schema moving away from it.
 /// These are DriveDocumentsProvider's statements word for word; keep them
 /// in step with
-/// android/app/src/main/kotlin/dev/ragoose/telegrive/picker/DriveDocumentsProvider.kt,
+/// android/app/src/main/kotlin/com/astrixtech/cloudora/picker/DriveDocumentsProvider.kt,
 /// which the first test reads to check that they still are.
 const _provider =
-    'android/app/src/main/kotlin/dev/ragoose/telegrive/picker/DriveDocumentsProvider.kt';
+    'android/app/src/main/kotlin/com/astrixtech/cloudora/picker/DriveDocumentsProvider.kt';
 
 const _shownTotals =
     'SELECT COUNT(*), COALESCE(SUM(size), 0) FROM drive_files WHERE parts_present >= part_count AND hidden = 0 AND in_private = 0';

@@ -97,7 +97,7 @@ final phoneUsageProvider = FutureProvider.autoDispose<PhoneUsage>((ref) async {
   final support = await getApplicationSupportDirectory();
   var index = 0;
   for (final suffix in ['', '-wal', '-shm']) {
-    index += await _sizeOf(File(p.join(support.path, 'telegrive.sqlite$suffix')));
+    index += await _sizeOf(File(p.join(support.path, 'cloudora.sqlite$suffix')));
   }
   final offline = (await db.offlineCopyList()).fold(0, (sum, copy) => sum + copy.size);
   final leftovers = (await queue.leftovers()).fold(0, (sum, leftover) => sum + leftover.bytes);

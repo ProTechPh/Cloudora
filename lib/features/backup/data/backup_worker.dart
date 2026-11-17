@@ -27,8 +27,8 @@ import 'backup_notifications.dart';
 /// its own, and posts "N new photos to back up", unless that reminder was
 /// swiped away less than a day ago.
 abstract final class BackupWorker {
-  static const String _periodicTask = 'telegrive.backup-check';
-  static const String _triggerTask = 'telegrive.media-trigger';
+  static const String _periodicTask = 'cloudora.backup-check';
+  static const String _triggerTask = 'cloudora.media-trigger';
 
   /// Android, where the jobs exist.
   static bool get supported => !kIsWeb && Platform.isAndroid;

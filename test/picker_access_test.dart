@@ -25,7 +25,7 @@ const _session = DriveSession(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
-  const picker = MethodChannel('telegrive/picker');
+  const picker = MethodChannel('cloudora/picker');
   final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   late Directory support;
   late List<bool> sent;

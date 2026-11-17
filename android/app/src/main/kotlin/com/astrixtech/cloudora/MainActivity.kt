@@ -1,4 +1,4 @@
-package dev.ragoose.telegrive
+package com.astrixtech.cloudora
 
 import android.Manifest
 import android.app.ActivityManager
@@ -27,7 +27,7 @@ import android.provider.OpenableColumns
 import android.provider.Settings
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
-import dev.ragoose.telegrive.picker.DriveDocumentsProvider
+import com.astrixtech.cloudora.picker.DriveDocumentsProvider
 import io.flutter.embedding.android.FlutterFragment
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -66,7 +66,7 @@ class MainActivity : FlutterFragmentActivity() {
     private var pendingLink: String? = null
     private var linkChannel: MethodChannel? = null
 
-    /** Follows the default network while Dart listens on telegrive/network. */
+    /** Follows the default network while Dart listens on cloudora/network. */
     private var networkWatcher: NetworkWatcher? = null
 
     /**
@@ -151,7 +151,7 @@ class MainActivity : FlutterFragmentActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         val messenger = flutterEngine.dartExecutor.binaryMessenger
-        shareChannel = MethodChannel(messenger, "telegrive/share").apply {
+        shareChannel = MethodChannel(messenger, "cloudora/share").apply {
             setMethodCallHandler { call, result ->
                 when (call.method) {
                     "takeShared" -> result.success(
@@ -184,7 +184,7 @@ class MainActivity : FlutterFragmentActivity() {
                 }
             }
         }
-        linkChannel = MethodChannel(messenger, "telegrive/links").apply {
+        linkChannel = MethodChannel(messenger, "cloudora/links").apply {
             setMethodCallHandler { call, result ->
                 when (call.method) {
                     "takeLink" -> result.success(pendingLink.also { pendingLink = null })
@@ -197,7 +197,7 @@ class MainActivity : FlutterFragmentActivity() {
         archives.attach(messenger)
         picks.attach(messenger)
         TextChannel(main).attach(messenger)
-        MethodChannel(messenger, "telegrive/security").setMethodCallHandler { call, result ->
+        MethodChannel(messenger, "cloudora/security").setMethodCallHandler { call, result ->
             when (call.method) {
                 "setPrivateRecents" -> {
                     // Keeps the app's content out of the recents screen while the
@@ -210,7 +210,7 @@ class MainActivity : FlutterFragmentActivity() {
                 else -> result.notImplemented()
             }
         }
-        MethodChannel(messenger, "telegrive/picker").setMethodCallHandler { call, result ->
+        MethodChannel(messenger, "cloudora/picker").setMethodCallHandler { call, result ->
             when (call.method) {
                 "setEnabled" -> {
                     val on = call.arguments == true
@@ -226,7 +226,7 @@ class MainActivity : FlutterFragmentActivity() {
                 else -> result.notImplemented()
             }
         }
-        MethodChannel(messenger, "telegrive/device_storage")
+        MethodChannel(messenger, "cloudora/device_storage")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "freeBytes" -> result.success(StatFs(filesDir.path).availableBytes)
@@ -249,14 +249,14 @@ class MainActivity : FlutterFragmentActivity() {
                     else -> result.notImplemented()
                 }
             }
-        MethodChannel(messenger, "telegrive/device").setMethodCallHandler { call, result ->
+        MethodChannel(messenger, "cloudora/device").setMethodCallHandler { call, result ->
             when (call.method) {
                 "profile" -> result.success(deviceProfile())
                 "deviceInfo" -> result.success(deviceInfo())
                 else -> result.notImplemented()
             }
         }
-        MethodChannel(messenger, "telegrive/media").setMethodCallHandler { call, result ->
+        MethodChannel(messenger, "cloudora/media").setMethodCallHandler { call, result ->
             when (call.method) {
                 "canPlayStream" -> result.success(
                     packageManager.queryIntentActivities(
@@ -309,7 +309,7 @@ class MainActivity : FlutterFragmentActivity() {
                 else -> result.notImplemented()
             }
         }
-        MethodChannel(messenger, "telegrive/system").setMethodCallHandler { call, result ->
+        MethodChannel(messenger, "cloudora/system").setMethodCallHandler { call, result ->
             when (call.method) {
                 "openNotificationSettings" -> result.success(
                     openSettings(
@@ -338,7 +338,7 @@ class MainActivity : FlutterFragmentActivity() {
                 else -> result.notImplemented()
             }
         }
-        EventChannel(messenger, "telegrive/network").setStreamHandler(
+        EventChannel(messenger, "cloudora/network").setStreamHandler(
             object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
                     stopWatchingNetwork()
@@ -386,7 +386,7 @@ class MainActivity : FlutterFragmentActivity() {
          * Reads the state afresh. Callbacks arrive on Android's own thread,
          * where an exception would end the app, and the sink is main only.
          * Android 11 can refuse the read with a SecurityException that has
-         * nothing to do with Telegrive; nothing is sent then, and the next
+         * nothing to do with Cloudora; nothing is sent then, and the next
          * change sends the state again.
          */
         fun emit() {
@@ -709,7 +709,7 @@ class MainActivity : FlutterFragmentActivity() {
     /**
      * Queues files for Dart to take and says so: what other apps shared in,
      * and a capture whose Dart call died with its engine, which then arrives
-     * through the same Save to Telegrive sheet.
+     * through the same Save to Cloudora sheet.
      */
     private fun addShared(items: List<Map<String, Any>>) {
         synchronized(pendingShares) { pendingShares.addAll(items) }
@@ -744,7 +744,7 @@ class MainActivity : FlutterFragmentActivity() {
         File(cacheDir, "shared/${System.nanoTime()}").apply { mkdirs() }
 
     /**
-     * One shared file for Dart. A gallery file Telegrive may read by its own
+     * One shared file for Dart. A gallery file Cloudora may read by its own
      * permission is sent from where it is ("owned" false, so it is never
      * deleted). Anything else is copied, unless the copy would leave the
      * phone with less than [ROOM_MARGIN] free: then only its size and the
@@ -836,7 +836,7 @@ class MainActivity : FlutterFragmentActivity() {
 
     /**
      * The file behind a MediaStore [uri], from the gallery itself or from the
-     * system file picker's media documents, when Telegrive's own permission
+     * system file picker's media documents, when Cloudora's own permission
      * covers it. Read by path on the share's grant alone, it could stop
      * being readable once the grant ends, and an upload still in the queue
      * would lose its file. Null for anything else.
@@ -863,7 +863,7 @@ class MainActivity : FlutterFragmentActivity() {
     }
 
     /**
-     * Whether Telegrive's own permission lets it read a gallery file of
+     * Whether Cloudora's own permission lets it read a gallery file of
      * [mimeType]: photo or video access from Android 13 on, which is all
      * backup asks for, and storage access before that. With access to
      * selected photos only (Android 14), the file is copied instead.

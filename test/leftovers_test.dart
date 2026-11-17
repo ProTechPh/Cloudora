@@ -15,7 +15,7 @@ void main() {
 
   setUp(() {
     temp = Directory.systemTemp.createTempSync('leftovers_test');
-    staging = Directory(p.join(temp.path, 'telegrive-staging'))..createSync();
+    staging = Directory(p.join(temp.path, 'cloudora-staging'))..createSync();
     shared = Directory(p.join(temp.path, 'shared'))..createSync();
     now = DateTime.now().add(const Duration(hours: 1));
   });
@@ -34,7 +34,7 @@ void main() {
   );
 
   test('an old copy nothing needs is deleted, and what it held is counted', () async {
-    final orphan = file('telegrive-staging/t1/movie.mp4', 300);
+    final orphan = file('cloudora-staging/t1/movie.mp4', 300);
     final loose = file('shared/note.txt', 20);
 
     expect(await sweep({}), 320);
@@ -53,8 +53,8 @@ void main() {
   });
 
   test('the folder of a copy a transfer still needs stays, and so does the copy', () async {
-    final needed = file('telegrive-staging/t2/report.pdf', 100);
-    final orphan = file('telegrive-staging/t3/report.pdf', 40);
+    final needed = file('cloudora-staging/t2/report.pdf', 100);
+    final orphan = file('cloudora-staging/t3/report.pdf', 40);
 
     expect(await sweep({needed.path}), 40);
     expect(needed.existsSync(), isTrue);
@@ -135,7 +135,7 @@ void main() {
       expect(leftoverPlaces(android).fileRoots, isEmpty);
       expect(
         leftoverPlaces(android).roots.map((d) => d.path),
-        contains('/data/user/0/app/cache/telegrive-album-thumbs'),
+        contains('/data/user/0/app/cache/cloudora-album-thumbs'),
       );
     });
   });

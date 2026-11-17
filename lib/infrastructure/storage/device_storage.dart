@@ -15,7 +15,7 @@ import 'package:photo_manager/photo_manager.dart';
 ///
 /// Photos and videos can go to the gallery instead.
 class DeviceStorage {
-  static const _channel = MethodChannel('telegrive/device_storage');
+  static const _channel = MethodChannel('cloudora/device_storage');
   static const _folder = 'Cloudora';
 
   /// Where saved files are, in words a person can follow to find them.

@@ -106,7 +106,7 @@ make_framework() {
 	<key>CFBundleExecutable</key>
 	<string>tdjson</string>
 	<key>CFBundleIdentifier</key>
-	<string>dev.ragoose.telegrive.tdjson</string>
+	<string>com.astrixtech.cloudora.tdjson</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>

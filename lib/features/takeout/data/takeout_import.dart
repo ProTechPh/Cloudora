@@ -1512,7 +1512,7 @@ class TakeoutImport extends Notifier<TakeoutState> {
   /// A fresh path for a preview in the cache, where the upload queue deletes
   /// it once the upload it goes with is through.
   static Future<String> _thumbnailPath() async =>
-      p.join((await getTemporaryDirectory()).path, 'telegrive-thumbs', 'takeout-${DateTime.now().microsecondsSinceEpoch}.jpg');
+      p.join((await getTemporaryDirectory()).path, 'cloudora-thumbs', 'takeout-${DateTime.now().microsecondsSinceEpoch}.jpg');
 
   /// Gives the photos and videos the import sent without a preview one each,
   /// as [PreviewMaker.make] does. Answers how it went, with how many files

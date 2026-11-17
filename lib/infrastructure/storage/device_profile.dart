@@ -16,7 +16,7 @@ class DeviceProfile {
   /// A phone that couldn't say, which counts as an ordinary one.
   static const unknown = DeviceProfile(lowRam: false, memoryClassMb: 0, totalRamBytes: 0);
 
-  static const _channel = MethodChannel('telegrive/device');
+  static const _channel = MethodChannel('cloudora/device');
 
   /// Below this much memory a phone saves memory unless told otherwise:
   /// 2.5 GiB, where a grid of thousands of photos starts to stutter and

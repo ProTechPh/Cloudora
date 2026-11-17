@@ -101,7 +101,7 @@ void main() {
           _item(
             'Diary.pdf',
             kind: TransferKind.download,
-            resultPath: '/data/telegrive/Diary.pdf',
+            resultPath: '/data/cloudora/Diary.pdf',
             folderId: 'vault',
           ),
         ],
@@ -160,7 +160,7 @@ void main() {
         _item(
           'report.pdf',
           kind: TransferKind.download,
-          resultPath: '/data/telegrive/report.pdf',
+          resultPath: '/data/cloudora/report.pdf',
         ),
       ], _since)!;
       expect(summary.title, 'Downloaded report.pdf');

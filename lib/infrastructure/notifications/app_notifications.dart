@@ -16,7 +16,7 @@ abstract final class AppNotifications {
   static final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
 
-  static const MethodChannel _system = MethodChannel('telegrive/system');
+  static const MethodChannel _system = MethodChannel('cloudora/system');
 
   /// The ongoing notification while transfers run, posted by the
   /// foreground service.
@@ -35,7 +35,7 @@ abstract final class AppNotifications {
   static const int transfersTimedOutId = 2004;
 
   /// The one-colour mark, with its creases open.
-  static const String icon = 'ic_stat_telegrive';
+  static const String icon = 'ic_stat_cloudora';
 
   static bool _initialized = false;
 

@@ -8,7 +8,7 @@ import 'package:cloudora/features/viewer/presentation/decoded_by_phone.dart';
 import 'package:cloudora/infrastructure/media/media_probe.dart';
 
 void main() {
-  const media = MethodChannel('telegrive/media');
+  const media = MethodChannel('cloudora/media');
   const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
   TestWidgetsFlutterBinding.ensureInitialized();
   final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -17,7 +17,7 @@ void main() {
   String? answer;
 
   setUp(() async {
-    dir = await Directory.systemTemp.createTemp('telegrive_decoded');
+    dir = await Directory.systemTemp.createTemp('cloudora_decoded');
     asked = [];
     answer = null;
     MediaProbe.asks = true;

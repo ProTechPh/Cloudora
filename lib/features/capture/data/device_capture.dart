@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 /// What the New sheet can make with the phone itself. Each name is the
-/// telegrive/capture method that makes it.
+/// cloudora/capture method that makes it.
 enum CaptureKind { scan, photo }
 
 /// Which captures this phone can make, so the New sheet leaves out a row
@@ -61,9 +61,9 @@ class CapturedFile {
 }
 
 /// The document scanner and the phone's camera app, reached through the
-/// telegrive/capture channel. Android only.
+/// cloudora/capture channel. Android only.
 class DeviceCapture {
-  static const _channel = MethodChannel('telegrive/capture');
+  static const _channel = MethodChannel('cloudora/capture');
 
   Future<CaptureSupport> support() async {
     final map = await _channel.invokeMapMethod<Object?, Object?>('support');

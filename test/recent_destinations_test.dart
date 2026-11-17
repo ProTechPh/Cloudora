@@ -64,7 +64,7 @@ FoldersCompanion _folder(String id, String name, {bool trashed = false}) =>
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  const share = MethodChannel('telegrive/share');
+  const share = MethodChannel('cloudora/share');
 
   group('pushed', () {
     test('moves a folder to the front without keeping its old place', () {

@@ -67,12 +67,12 @@ void main() {
     };
 
     test('skips what transfers use and what is still being made, and finds the rest', () async {
-      final queued = file('telegrive-staging/t1/movie.mp4', 300);
-      final paused = file('telegrive-parts/t2/movie.mp4.002', 200);
-      file('telegrive-staging/t3/old.mp4', 120);
+      final queued = file('cloudora-staging/t1/movie.mp4', 300);
+      final paused = file('cloudora-parts/t2/movie.mp4.002', 200);
+      file('cloudora-staging/t3/old.mp4', 120);
       file('shared/9/note.txt', 20);
       file('file_picker/1/scan.pdf', 40);
-      file('telegrive-thumbs/t4.jpg', 8);
+      file('cloudora-thumbs/t4.jpg', 8);
       channelPhoto.writeAsBytesSync(List.filled(5, 1));
       file('shared/10/clip.mp4.part', 70)
         // Written two minutes before the look.
@@ -81,15 +81,15 @@ void main() {
       final found = await look({queued.path, paused.parent.path});
 
       expect(found, {
-        p.join('telegrive-staging', 't3'): 120,
+        p.join('cloudora-staging', 't3'): 120,
         p.join('shared', '9'): 20,
         p.join('file_picker', '1'): 40,
-        p.join('telegrive-thumbs', 't4.jpg'): 8,
+        p.join('cloudora-thumbs', 't4.jpg'): 8,
         leftoverFiles.single: 5,
       });
       // Finding them deletes nothing.
       expect(queued.existsSync(), isTrue);
-      expect(File(p.join(temp.path, 'telegrive-staging/t3/old.mp4')).existsSync(), isTrue);
+      expect(File(p.join(temp.path, 'cloudora-staging/t3/old.mp4')).existsSync(), isTrue);
     });
 
     test('nothing there is nothing found', () async {

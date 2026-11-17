@@ -2144,7 +2144,7 @@ class BackupController extends Notifier<BackupState> {
         return null;
       }
       final dir = Directory(
-        p.join((await getTemporaryDirectory()).path, 'telegrive-small'),
+        p.join((await getTemporaryDirectory()).path, 'cloudora-small'),
       );
       await dir.create(recursive: true);
       final file = File(p.join(dir.path, '${asset.id.hashCode}.jpg'));
@@ -2168,7 +2168,7 @@ class BackupController extends Notifier<BackupState> {
         return null;
       }
       final dir = Directory(
-        p.join((await getTemporaryDirectory()).path, 'telegrive-thumbs'),
+        p.join((await getTemporaryDirectory()).path, 'cloudora-thumbs'),
       );
       await dir.create(recursive: true);
       final file = File(p.join(dir.path, '${asset.id.hashCode}.jpg'));

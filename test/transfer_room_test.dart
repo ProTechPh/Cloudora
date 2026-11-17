@@ -74,7 +74,7 @@ void main() {
   final now = DateTime(2026, 10, 4);
 
   setUp(() async {
-    dir = await Directory.systemTemp.createTemp('telegrive_room');
+    dir = await Directory.systemTemp.createTemp('cloudora_room');
     db = AppDatabase(NativeDatabase.memory());
     storage = _Storage();
     // The app's cache, support and documents folders all live here.
@@ -232,7 +232,7 @@ void main() {
   });
 
   test('a copy shorter than its row says is never sent', () async {
-    final copy = File(p.join(dir.path, 'telegrive-staging', 'cut', 'Wedding.mp4'))
+    final copy = File(p.join(dir.path, 'cloudora-staging', 'cut', 'Wedding.mp4'))
       ..createSync(recursive: true)
       ..writeAsStringSync('0123456789');
     await db.saveTransfers([
@@ -266,7 +266,7 @@ void main() {
   });
 
   test('a copy the app was stopped in the middle of fails, and its part is deleted', () async {
-    final staged = p.join(dir.path, 'telegrive-staging', 'half', 'Wedding.mp4');
+    final staged = p.join(dir.path, 'cloudora-staging', 'half', 'Wedding.mp4');
     final partial = File('$staged.part')
       ..createSync(recursive: true)
       ..writeAsStringSync('01234');
@@ -313,7 +313,7 @@ void main() {
     final original = File(p.join(dir.path, 'DCIM', 'clip.mp4'))
       ..createSync(recursive: true)
       ..writeAsStringSync('0123456789');
-    final part = File(p.join(dir.path, 'telegrive-parts', 'movie.mkv', 'movie.mkv.001'))
+    final part = File(p.join(dir.path, 'cloudora-parts', 'movie.mkv', 'movie.mkv.001'))
       ..createSync(recursive: true)
       ..writeAsStringSync('0123456789');
     await db.saveTransfers([
@@ -365,7 +365,7 @@ void main() {
     release.complete();
     await until(() => !state().items.single.preparing);
 
-    final staging = Directory(p.join(dir.path, 'telegrive-staging'));
+    final staging = Directory(p.join(dir.path, 'cloudora-staging'));
     expect(staging.listSync(recursive: true).whereType<File>(), isEmpty);
     expect(state().items.single.status, TransferStatus.cancelled);
     expect(telegram.sends, 0);
@@ -391,7 +391,7 @@ void main() {
     ]);
     await until(() => state().waitingForRoom.isNotEmpty);
     expect(copied, isEmpty);
-    expect(Directory(p.join(dir.path, 'telegrive-staging')).existsSync(), isFalse);
+    expect(Directory(p.join(dir.path, 'cloudora-staging')).existsSync(), isFalse);
 
     storage.free = 10 << 30;
     await queue.recheckRoom();

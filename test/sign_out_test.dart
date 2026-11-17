@@ -137,7 +137,7 @@ void main() {
 
     // Two phone folders whose new files upload, each read on a grant
     // Android keeps until it is given back.
-    const folders = MethodChannel('telegrive/folders');
+    const folders = MethodChannel('cloudora/folders');
     final released = <String>[];
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
       folders,

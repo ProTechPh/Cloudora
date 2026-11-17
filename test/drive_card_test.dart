@@ -263,7 +263,7 @@ void main() {
     telegram.messages[60 << 20] = channelMessage(
       60 << 20,
       td.MessageDocument(
-        document: td.Document(fileName: 'telegrive-index.json.gz', mimeType: 'application/gzip', document: tdFile(77)),
+        document: td.Document(fileName: 'cloudora-index.json.gz', mimeType: 'application/gzip', document: tdFile(77)),
         caption: td.FormattedText(
           text: ManifestCodec.encodeIndex(
             IndexRecord(driveId: 'drive-1', throughMessageId: 900, files: 0, createdAt: DateTime(2026, 10, 5)),

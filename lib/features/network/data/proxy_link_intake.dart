@@ -12,7 +12,7 @@ import '../domain/proxy_link.dart';
 /// or reached it while open; the app then offers it in the proxy sheet and
 /// clears it. A link that isn't a usable proxy is dropped.
 class ProxyLinkIntake extends Notifier<ProxyLink?> {
-  static const _channel = MethodChannel('telegrive/links');
+  static const _channel = MethodChannel('cloudora/links');
 
   @override
   ProxyLink? build() {

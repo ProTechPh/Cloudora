@@ -361,7 +361,7 @@ void main() {
     }
 
     setUp(() async {
-      dir = await Directory.systemTemp.createTemp('telegrive_scan_plan');
+      dir = await Directory.systemTemp.createTemp('cloudora_scan_plan');
       library = [];
       files = {};
       asked = [];

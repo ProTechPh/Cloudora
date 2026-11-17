@@ -4,7 +4,7 @@ import '../../app/theme/tokens.dart';
 
 /// The Cloudora mark: a cloud drive icon with vibrant gradient blue hues
 /// and sleek accents. The picture is rendered from
-/// tool/icon/source/telegrive.png, as every icon is.
+/// tool/icon/source/cloudora.png, as every icon is.
 class BrandMark extends StatelessWidget {
   const BrandMark({super.key, this.size = 56});
 

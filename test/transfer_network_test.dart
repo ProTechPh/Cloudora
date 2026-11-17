@@ -167,7 +167,7 @@ void main() {
   final now = DateTime(2026, 10, 2);
 
   setUp(() async {
-    dir = await Directory.systemTemp.createTemp('telegrive_network');
+    dir = await Directory.systemTemp.createTemp('cloudora_network');
     db = AppDatabase(NativeDatabase.memory());
     fetched = File('${dir.path}/report.pdf')..writeAsStringSync('0123456789');
     TransferQueue.waitUnit = const Duration(milliseconds: 1);

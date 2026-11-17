@@ -2,8 +2,8 @@
 <!-- The sharing shortcuts Cloudora publishes stand for recent drive folders.
      Each opens MainActivity with the shared files and the folder's id. -->
 <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
-    <share-target android:targetClass="dev.ragoose.telegrive.MainActivity">
+    <share-target android:targetClass="com.astrixtech.cloudora.MainActivity">
         <data android:mimeType="*/*"/>
-        <category android:name="dev.ragoose.telegrive.category.FOLDER"/>
+        <category android:name="com.astrixtech.cloudora.category.FOLDER"/>
     </share-target>
 </shortcuts>

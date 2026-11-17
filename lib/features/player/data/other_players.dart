@@ -7,9 +7,9 @@ import '../../../core/files/file_kind.dart';
 import '../../drive/domain/drive_models.dart';
 
 /// The other apps on this phone that can play a stream, asked through the
-/// telegrive/media channel. Only Android hands a stream over this way.
+/// cloudora/media channel. Only Android hands a stream over this way.
 abstract final class OtherPlayers {
-  static const _channel = MethodChannel('telegrive/media');
+  static const _channel = MethodChannel('cloudora/media');
 
   static bool get supported => !kIsWeb && Platform.isAndroid;
 

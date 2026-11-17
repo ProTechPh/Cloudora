@@ -447,7 +447,7 @@ void main() {
       // yet; the database is sound, so it is never started over.
       const locked = TelegramException(
         400,
-        "Can't lock file \"/data/user/0/dev.ragoose.telegrive/files/tdlib/db/td.binlog\", "
+        "Can't lock file \"/data/user/0/com.astrixtech.cloudora/files/tdlib/db/td.binlog\", "
         'because it is already in use; check for another program instance running',
       );
       expect(locked.isDatabaseInUse, isTrue);

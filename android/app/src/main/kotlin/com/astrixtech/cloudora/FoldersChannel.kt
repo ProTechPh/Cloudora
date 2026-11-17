@@ -1,4 +1,4 @@
-package dev.ragoose.telegrive
+package com.astrixtech.cloudora
 
 import android.content.ActivityNotFoundException
 import android.content.Intent
@@ -46,7 +46,7 @@ class FoldersChannel(
     private var keep = true
 
     fun attach(messenger: BinaryMessenger) {
-        MethodChannel(messenger, "telegrive/folders").setMethodCallHandler { call, result ->
+        MethodChannel(messenger, "cloudora/folders").setMethodCallHandler { call, result ->
             when (call.method) {
                 "pick" -> pick(result, keep = call.argument<Boolean>("keep") != false)
                 "list" -> answer(result) {
@@ -218,7 +218,7 @@ class FoldersChannel(
 
     /**
      * Gives back the read access kept for [tree]; one already gone is fine.
-     * Answers how many folders Telegrive can still read, which the Dart
+     * Answers how many folders Cloudora can still read, which the Dart
      * side logs, so a grant left behind shows.
      */
     private fun release(tree: Uri): Int {
@@ -231,7 +231,7 @@ class FoldersChannel(
     }
 
     /**
-     * Whether Telegrive still holds read access to [tree] and the folder is
+     * Whether Cloudora still holds read access to [tree] and the folder is
      * still there: a folder renamed, deleted or on a removed card keeps its
      * grant but answers no query.
      */

@@ -110,7 +110,7 @@ fails never leaves two.
 | `tgalbum2` | Text | One album |
 | `tgfile2` | Document | One file, or the first part of a split file |
 | `tgpart2` | Document | A later part of a split file |
-| `tgindex2` | Document | A copy of the index (`telegrive-index.json.gz`) |
+| `tgindex2` | Document | A copy of the index (`cloudora-index.json.gz`) |
 
 The `2` is the version of the format. A later format that an older app
 couldn't read would take a new kind.
@@ -323,7 +323,7 @@ Move these and Keep these, and take only what it found.
 ### The copy of the index
 
 The channel also keeps a copy of the whole index: one document,
-`telegrive-index.json.gz`, captioned `tgindex2`, which the drive message
+`cloudora-index.json.gz`, captioned `tgindex2`, which the drive message
 points to by number. A phone opening a drive for the first time fills its
 index from the copy and shows Home at once, then reads the channel in full
 behind it and settles whatever changed since the copy was written.

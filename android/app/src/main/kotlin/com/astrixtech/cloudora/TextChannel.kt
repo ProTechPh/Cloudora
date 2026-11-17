@@ -1,4 +1,4 @@
-package dev.ragoose.telegrive
+package com.astrixtech.cloudora
 
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -37,7 +37,7 @@ class TextChannel(private val main: Handler) {
     }
 
     fun attach(messenger: BinaryMessenger) {
-        MethodChannel(messenger, "telegrive/text").setMethodCallHandler { call, result ->
+        MethodChannel(messenger, "cloudora/text").setMethodCallHandler { call, result ->
             when (call.method) {
                 "readPdfPages" -> {
                     val path = call.argument<String>("path")

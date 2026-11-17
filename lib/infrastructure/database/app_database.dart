@@ -122,7 +122,7 @@ class AppDatabase extends _$AppDatabase {
     : super(
         executor ??
             driftDatabase(
-              name: 'telegrive',
+              name: 'cloudora',
               native: DriftNativeOptions(
                 databaseDirectory: _directory,
                 setup: (db) => db.execute('PRAGMA busy_timeout = 3000;'),

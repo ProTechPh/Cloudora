@@ -24,7 +24,7 @@ class _FakeTelegram extends FakeTelegram {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  const channel = EventChannel('telegrive/network');
+  const channel = EventChannel('cloudora/network');
 
   group('NetworkState', () {
     test('reads what Android sends and shrugs off anything else', () {

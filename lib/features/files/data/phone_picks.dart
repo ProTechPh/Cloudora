@@ -16,11 +16,11 @@ class PickedDocument {
   final int? size;
 }
 
-/// Files picked for upload through the telegrive/picks channel. The picker
+/// Files picked for upload through the cloudora/picks channel. The picker
 /// gives back where each file is, and each is copied only when its upload
 /// starts, so picking hundreds at once copies nothing up front.
 abstract final class PhonePicks {
-  static const _channel = MethodChannel('telegrive/picks');
+  static const _channel = MethodChannel('cloudora/picks');
 
   /// Whether this phone picks this way. Elsewhere the file picker plugin
   /// makes its copies at once.

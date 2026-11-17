@@ -50,10 +50,10 @@ class BackgroundHealth {
   }
 }
 
-/// The calls on the `telegrive/system` channel that concern backup with
+/// The calls on the `cloudora/system` channel that concern backup with
 /// the app closed.
 abstract final class BatterySettings {
-  static const MethodChannel _system = MethodChannel('telegrive/system');
+  static const MethodChannel _system = MethodChannel('cloudora/system');
 
   /// Whether Android exempts Cloudora from battery optimisation. A phone
   /// that can't say counts as exempt, so nothing claims what isn't known.

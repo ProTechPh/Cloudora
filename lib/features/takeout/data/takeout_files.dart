@@ -16,14 +16,14 @@ class PickedArchive {
   final int size;
 }
 
-/// The zip files of a Google Photos export, through the telegrive/archives
+/// The zip files of a Google Photos export, through the cloudora/archives
 /// channel: Android's picker for them, reading them where they lie, and
 /// deleting them once they're done with. Android only; elsewhere [pick]
 /// finds nothing.
 class TakeoutFiles {
   const TakeoutFiles();
 
-  static const _channel = MethodChannel('telegrive/archives');
+  static const _channel = MethodChannel('cloudora/archives');
 
   static bool get supported => !kIsWeb && Platform.isAndroid;
 

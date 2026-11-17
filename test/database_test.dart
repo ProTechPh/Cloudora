@@ -1245,8 +1245,8 @@ void main() {
       name: '$id.mp4',
       mimeType: 'video/mp4',
       fileId: 'f-$id',
-      sourcePath: '/cache/telegrive-staging/$id.mp4',
-      thumbnailPath: '/cache/telegrive-thumbs/$id.jpg',
+      sourcePath: '/cache/cloudora-staging/$id.mp4',
+      thumbnailPath: '/cache/cloudora-thumbs/$id.jpg',
       ownsSource: true,
       wifiOnly: false,
       totalBytes: 1,
@@ -1283,8 +1283,8 @@ void main() {
 
     expect(await db.pathsInUse(), {
       for (final id in ['queued', 'paused', 'failed']) ...[
-        '/cache/telegrive-staging/$id.mp4',
-        '/cache/telegrive-thumbs/$id.jpg',
+        '/cache/cloudora-staging/$id.mp4',
+        '/cache/cloudora-thumbs/$id.jpg',
       ],
       '/support/downloads/film/film.mkv',
     });

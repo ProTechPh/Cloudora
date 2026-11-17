@@ -186,7 +186,7 @@ void main() {
   }
 
   setUp(() async {
-    dir = await Directory.systemTemp.createTemp('telegrive_backup_small');
+    dir = await Directory.systemTemp.createTemp('cloudora_backup_small');
     library = [];
     files = {};
     smallCopyBytes = 300 * 1024;
@@ -296,7 +296,7 @@ void main() {
     expect(small.smallCopyOf, 6 * _mb);
     expect(small.size, 300 * 1024);
     expect(small.wifiOnly, isFalse);
-    expect(small.path, contains('telegrive-small'));
+    expect(small.path, contains('cloudora-small'));
     final record = (await db.backupAssetMap())['p1']!;
     expect(record.state, BackupAssetState.smallCopy);
     expect(await db.safelyBackedUp(), isEmpty);
@@ -365,7 +365,7 @@ void main() {
     await container.read(backupControllerProvider.notifier).run();
 
     expect(queue.uploads, isEmpty);
-    expect(Directory('${dir.path}/cache/telegrive-small').listSync(), isEmpty);
+    expect(Directory('${dir.path}/cache/cloudora-small').listSync(), isEmpty);
     final backup = container.read(backupControllerProvider);
     expect(backup.phase, BackupPhase.waitingForBudget);
     expect(backup.heldForBudget, 2);

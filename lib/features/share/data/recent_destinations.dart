@@ -23,7 +23,7 @@ import '../../lock/data/app_lock.dart';
 /// on, the share sheet gets none of them, so folder names stay out of
 /// other apps.
 class RecentDestinations extends Notifier<List<FolderChoice>> {
-  static const _channel = MethodChannel('telegrive/share');
+  static const _channel = MethodChannel('cloudora/share');
 
   /// How many folders are remembered.
   static const keep = 5;

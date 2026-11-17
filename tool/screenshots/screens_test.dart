@@ -529,7 +529,7 @@ Future<Uint8List> _scene(Color sky, Color ground, int px) async {
 /// thumbnail at the resolution Telegram actually serves (320 px).
 Future<_FakePhoto> _fakePhoto(Color sky, Color ground) async {
   final id = _thumbPaths.length + 1;
-  final file = File('${Directory.systemTemp.path}/telegrive_thumb_$id.png');
+  final file = File('${Directory.systemTemp.path}/cloudora_thumb_$id.png');
   await file.writeAsBytes(await _scene(sky, ground, 320));
   _thumbPaths[id] = file.path;
   return (mini: await _scene(sky, ground, 24), thumbId: id);

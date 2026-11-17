@@ -1484,7 +1484,7 @@ class TransferQueue extends Notifier<TransfersState> {
           video: kind == FileKind.video,
           out: p.join(
             (await getTemporaryDirectory()).path,
-            'telegrive-thumbs',
+            'cloudora-thumbs',
             'upload-${initial.id}.jpg',
           ),
         );
@@ -1848,7 +1848,7 @@ class TransferQueue extends Notifier<TransfersState> {
 
   static Future<Directory> _stagingDir() async {
     final temp = await getTemporaryDirectory();
-    return Directory(p.join(temp.path, 'telegrive-staging'));
+    return Directory(p.join(temp.path, 'cloudora-staging'));
   }
 
   void _trackMessage(td.Message pending, String transferId, int base) {
@@ -1871,7 +1871,7 @@ class TransferQueue extends Notifier<TransfersState> {
 
   Future<Directory> _partsDir(String transferId) async {
     final temp = await getTemporaryDirectory();
-    return Directory(p.join(temp.path, 'telegrive-parts', transferId));
+    return Directory(p.join(temp.path, 'cloudora-parts', transferId));
   }
 
   // ---------------------------------------------------------------------------

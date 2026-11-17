@@ -16,7 +16,7 @@ import '../telegram/telegram_client.dart';
 class NetworkState {
   const NetworkState({required this.online, required this.metered});
 
-  /// One `{online, metered}` event from the `telegrive/network` channel.
+  /// One `{online, metered}` event from the `cloudora/network` channel.
   /// Anything else reads as [unknown], so a malformed event never blocks.
   factory NetworkState.fromEvent(Object? event) {
     if (event is! Map) return unknown;
@@ -63,7 +63,7 @@ class NetworkState {
 /// TDLib only takes the type once it has its parameters, so the current one
 /// goes again the moment it is configured, and after each restart.
 class NetworkStatus extends Notifier<NetworkState> {
-  static const _channel = EventChannel('telegrive/network');
+  static const _channel = EventChannel('cloudora/network');
 
   /// Whether Android's network callback is there to listen to. Anywhere it
   /// isn't (other platforms, host tests) the state stays

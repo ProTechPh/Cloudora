@@ -4,7 +4,7 @@ import 'package:cloudora/features/search/data/page_reader.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  const channel = MethodChannel('telegrive/text');
+  const channel = MethodChannel('cloudora/text');
   final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
   late List<MethodCall> calls;

@@ -19,7 +19,7 @@ fun keyProperty(name: String): String =
         ?: throw GradleException("android/key.properties has no $name")
 
 android {
-    namespace = "dev.ragoose.telegrive"
+    namespace = "com.astrixtech.cloudora"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -31,7 +31,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "dev.ragoose.telegrive"
+        applicationId = "com.astrixtech.cloudora"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         // From pubspec.yaml. A split-per-ABI build adds 1000 × the ABI's

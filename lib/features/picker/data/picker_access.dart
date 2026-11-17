@@ -54,7 +54,7 @@ final pickerEnabledProvider = NotifierProvider<PickerEnabledNotifier, bool>(
 /// name and renamed into place, so the picker never reads half of one.
 final pickerAccessProvider = Provider<void>((ref) {
   if (!ref.read(pickerSupportedProvider)) return;
-  const channel = MethodChannel('telegrive/picker');
+  const channel = MethodChannel('cloudora/picker');
 
   bool enabled() => ref.read(pickerEnabledProvider) && !ref.read(appLockProvider).enabled;
   bool bridge() => enabled() && ref.read(driveSessionProvider) != null;

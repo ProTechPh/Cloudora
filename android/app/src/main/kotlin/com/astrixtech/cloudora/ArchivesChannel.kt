@@ -1,4 +1,4 @@
-package dev.ragoose.telegrive
+package com.astrixtech.cloudora
 
 import android.content.ActivityNotFoundException
 import android.content.Intent
@@ -33,7 +33,7 @@ import java.util.zip.Inflater
  * persistable grant, as a watched folder does, taken only while a Dart
  * call is waiting for the pick. Reads ask the part's provider, another
  * process, so they run off the main thread. A part Android won't let
- * Telegrive read answers an error named 'no_access', a part cut short
+ * Cloudora read answers an error named 'no_access', a part cut short
  * 'incomplete', a file that fails its checksum 'damaged', and anything else
  * 'failed'.
  */
@@ -75,7 +75,7 @@ class ArchivesChannel(
     private class ArchiveException(val code: String, message: String) : IOException(message)
 
     fun attach(messenger: BinaryMessenger) {
-        MethodChannel(messenger, "telegrive/archives").setMethodCallHandler { call, result ->
+        MethodChannel(messenger, "cloudora/archives").setMethodCallHandler { call, result ->
             when (call.method) {
                 "pick" -> pick(result)
                 "read" -> answer(result) { read(Uri.parse(call.text("uri")), call.ranges()) }
@@ -292,7 +292,7 @@ class ArchivesChannel(
 
     /**
      * Gives back the access kept for [uri]; one already gone is fine. Answers
-     * how many grants Telegrive still holds, which the Dart side logs.
+     * how many grants Cloudora still holds, which the Dart side logs.
      */
     private fun release(uri: Uri): Int {
         forget(uri)
@@ -310,7 +310,7 @@ class ArchivesChannel(
         return activity.contentResolver.persistedUriPermissions.size
     }
 
-    /** Whether Telegrive still holds access to [uri] and the file is still there. */
+    /** Whether Cloudora still holds access to [uri] and the file is still there. */
     private fun canRead(uri: Uri): Boolean {
         val granted = activity.contentResolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }
         if (!granted) return false

@@ -398,7 +398,7 @@ Future<String?> _thumbnailFor(AssetEntity asset, String temp) async {
       quality: 90,
     );
     if (bytes == null || bytes.isEmpty || bytes.length > 200 * 1024) return null;
-    final dir = Directory(p.join(temp, 'telegrive-album-thumbs'));
+    final dir = Directory(p.join(temp, 'cloudora-album-thumbs'));
     await dir.create(recursive: true);
     final file = File(p.join(dir.path, '${asset.id.hashCode}.jpg'));
     await file.writeAsBytes(bytes, flush: true);

@@ -84,7 +84,7 @@ Future<void> _seed(AppDatabase db, FakeTelegram telegram) async {
 
 void main() {
   test('a download asked for before the drive opens waits, then finishes once it does', () async {
-    final dir = await Directory.systemTemp.createTemp('telegrive_late');
+    final dir = await Directory.systemTemp.createTemp('cloudora_late');
     addTearDown(() => dir.delete(recursive: true));
     final fetched = File('${dir.path}/report.pdf')..writeAsStringSync('0123456789');
 
@@ -128,7 +128,7 @@ void main() {
   });
 
   test('a paused download waits, then finishes when resumed', () async {
-    final dir = await Directory.systemTemp.createTemp('telegrive_pause');
+    final dir = await Directory.systemTemp.createTemp('cloudora_pause');
     addTearDown(() => dir.delete(recursive: true));
     final fetched = File('${dir.path}/report.pdf')..writeAsStringSync('0123456789');
 

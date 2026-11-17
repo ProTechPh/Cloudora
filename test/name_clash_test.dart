@@ -582,7 +582,7 @@ void main() {
         'batch and its copies', (tester) async {
       await open(gateClashes: true);
       // Made and removed in sync calls, which the test's clock doesn't hold.
-      final dir = Directory.systemTemp.createTempSync('telegrive_clash');
+      final dir = Directory.systemTemp.createTempSync('cloudora_clash');
       addTearDown(() => dir.deleteSync(recursive: true));
       final copies = [
         for (final name in ['Fresh.txt', 'Notes.txt'])
@@ -631,7 +631,7 @@ void main() {
     late Directory dir;
 
     setUp(() async {
-      dir = await Directory.systemTemp.createTemp('telegrive_clash');
+      dir = await Directory.systemTemp.createTemp('cloudora_clash');
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(
             const MethodChannel('plugins.flutter.io/path_provider'),

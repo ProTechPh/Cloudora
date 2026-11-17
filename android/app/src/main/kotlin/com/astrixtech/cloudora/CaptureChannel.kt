@@ -1,4 +1,4 @@
-package dev.ragoose.telegrive
+package com.astrixtech.cloudora
 
 import android.app.Activity
 import android.content.ActivityNotFoundException
@@ -42,7 +42,7 @@ class CaptureFileProvider : FileProvider()
  * so MainActivity creates this in onCreate and the Flutter engine attaches
  * to it later. One Dart call waits at a time; its answer is the file in the
  * cache, null when the person backed out, or an error when the scanner or
- * the camera couldn't start. When Android killed Telegrive while the camera
+ * the camera couldn't start. When Android killed Cloudora while the camera
  * was in front, the result arrives in a new process with no call waiting
  * for it, and goes to [onOrphan] rather than being lost.
  */
@@ -64,7 +64,7 @@ class CaptureChannel(
     private var photoTarget: File? = null
 
     fun attach(messenger: BinaryMessenger) {
-        MethodChannel(messenger, "telegrive/capture").setMethodCallHandler { call, result ->
+        MethodChannel(messenger, "cloudora/capture").setMethodCallHandler { call, result ->
             when (call.method) {
                 "support" -> support(result)
                 "scan" -> scan(result)
@@ -130,7 +130,7 @@ class CaptureChannel(
     }
 
     /**
-     * Opens the camera app on a file of Telegrive's own, reached through
+     * Opens the camera app on a file of Cloudora's own, reached through
      * [CaptureFileProvider], so the picture never lands in the gallery. A
      * phone without a camera app refuses the intent, and one where another
      * library declared the CAMERA permission refuses it until granted.
@@ -157,7 +157,7 @@ class CaptureChannel(
 
     /**
      * Copies the scanner's PDF into the capture folder under a name of
-     * Telegrive's own, off the main thread, and removes the scanner's copy
+     * Cloudora's own, off the main thread, and removes the scanner's copy
      * when it is a plain file in the cache. Backing out of the scanner, or
      * a result whose PDF can't be read, answers null. A scanner Android
      * couldn't start comes back as a cancel that carries the exception, and
@@ -267,7 +267,7 @@ class CaptureChannel(
     }
 
     /**
-     * The scanner leaves its PDF in Telegrive's cache. Once copied it is
+     * The scanner leaves its PDF in Cloudora's cache. Once copied it is
      * only taking room, so it goes when it really is a file there; a
      * content URI, or a path outside the cache, is left to its owner.
      */
@@ -286,6 +286,6 @@ class CaptureChannel(
     private fun stamp(): String = SimpleDateFormat("yyyy-MM-dd HH.mm", Locale.US).format(Date())
 
     private companion object {
-        const val PHOTO_TARGET = "dev.ragoose.telegrive.capture.photoTarget"
+        const val PHOTO_TARGET = "com.astrixtech.cloudora.capture.photoTarget"
     }
 }

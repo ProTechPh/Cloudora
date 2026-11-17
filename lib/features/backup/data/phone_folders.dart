@@ -60,10 +60,10 @@ class PhoneDocument {
 }
 
 /// Phone folders picked through Android's folder picker, reached through
-/// the telegrive/folders channel. Nothing needs a storage permission: each
+/// the cloudora/folders channel. Nothing needs a storage permission: each
 /// folder is read on the access granted when it was picked.
 class PhoneFolders {
-  static const _channel = MethodChannel('telegrive/folders');
+  static const _channel = MethodChannel('cloudora/folders');
 
   /// The most files a listing goes through; a bigger tree comes back cut
   /// short, with `truncated` set.

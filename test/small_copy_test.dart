@@ -240,7 +240,7 @@ void main() {
   /// IMG_2.HEIC's small copy as TDLib still sends it when the app stops: its
   /// row is running, its message pending, and the JPEG is on the phone.
   Future<File> leaveSmallCopySending() async {
-    final jpeg = File(p.join(dir.path, 'telegrive-small', '2.jpg'))
+    final jpeg = File(p.join(dir.path, 'cloudora-small', '2.jpg'))
       ..createSync(recursive: true)
       ..writeAsBytesSync(List.filled(_small, 2));
     final now = DateTime.fromMillisecondsSinceEpoch(1700000000000);
@@ -297,7 +297,7 @@ void main() {
   }
 
   setUp(() async {
-    dir = await Directory.systemTemp.createTemp('telegrive_small_copy');
+    dir = await Directory.systemTemp.createTemp('cloudora_small_copy');
     db = AppDatabase(NativeDatabase.memory());
     telegram = _Telegram();
     storage = _Storage();
@@ -318,7 +318,7 @@ void main() {
 
   test('a small copy goes up as a JPEG under the photo\'s name, marked as one', () async {
     await open();
-    final jpeg = File(p.join(dir.path, 'telegrive-small', '2.jpg'))
+    final jpeg = File(p.join(dir.path, 'cloudora-small', '2.jpg'))
       ..createSync(recursive: true)
       ..writeAsBytesSync(List.filled(_small, 2));
     final [id] = await queue.enqueueUploads([

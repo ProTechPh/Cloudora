@@ -1,4 +1,4 @@
-package dev.ragoose.telegrive.picker
+package com.astrixtech.cloudora.picker
 
 import android.database.Cursor
 import android.database.MatrixCursor
@@ -11,29 +11,29 @@ import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
 import android.provider.DocumentsContract.Root
 import android.provider.DocumentsProvider
-import dev.ragoose.telegrive.R
+import com.astrixtech.cloudora.R
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
 import java.util.Locale
 
 /**
- * The drive in Android's file picker: one root, Telegrive, holding the
+ * The drive in Android's file picker: one root, Cloudora, holding the
  * folders and files the Files tab shows, searchable by name and read-only.
  *
  * It runs in the ':picker' process and reads the index straight from
- * telegrive.sqlite with Android's SQLite, one short read-only connection
+ * cloudora.sqlite with Android's SQLite, one short read-only connection
  * per call and no transaction, so browsing needs neither Flutter nor
  * TDLib. The process of its own is what keeps the index safe: Android's
  * SQLite and Drift's are two copies of SQLite, and two copies in one
  * process drop each other's file locks. The app's writes wait out these
  * reads. An index that can't be read, after a sign-out or under a schema
- * this doesn't know, makes a listing say to open Telegrive instead of
+ * this doesn't know, makes a listing say to open Cloudora instead of
  * failing.
  *
  * A file opens from a copy on the phone when there is one, kept offline or
  * downloaded. Anything else streams from the app's stream server through
- * [BridgeReader], which needs Telegrive running with the drive open.
+ * [BridgeReader], which needs Cloudora running with the drive open.
  *
  * Document ids are 'root', 'd:<folder id>' and 'f:<file id>', using the
  * drive's own ids, so they stay the same across a rebuilt index or a
@@ -81,7 +81,7 @@ class DriveDocumentsProvider : DocumentsProvider() {
                 .add(Document.COLUMN_FLAGS, 0)
             return cursor
         }
-        val running = documentId.startsWith(FILE) && telegriveRunning()
+        val running = documentId.startsWith(FILE) && cloudoraRunning()
         try {
             readIndex { db ->
                 when {
@@ -99,7 +99,7 @@ class DriveDocumentsProvider : DocumentsProvider() {
         } catch (e: SQLiteException) {
             return unreadable(projection)
         }
-        if (cursor.count == 0) throw FileNotFoundException("Telegrive has no $documentId")
+        if (cursor.count == 0) throw FileNotFoundException("Cloudora has no $documentId")
         return cursor
     }
 
@@ -113,7 +113,7 @@ class DriveDocumentsProvider : DocumentsProvider() {
             parentDocumentId.startsWith(FOLDER) -> parentDocumentId.removePrefix(FOLDER)
             else -> throw FileNotFoundException("Not a folder: $parentDocumentId")
         }
-        val running = telegriveRunning()
+        val running = cloudoraRunning()
         val cursor = MatrixCursor(projection ?: DOCUMENT_COLUMNS)
         try {
             readIndex { db ->
@@ -127,7 +127,7 @@ class DriveDocumentsProvider : DocumentsProvider() {
         } catch (e: SQLiteException) {
             return unreadable(projection)
         }
-        if (!running) cursor.extras = Bundle().apply { putString(DocumentsContract.EXTRA_INFO, NEEDS_TELEGRIVE) }
+        if (!running) cursor.extras = Bundle().apply { putString(DocumentsContract.EXTRA_INFO, NEEDS_CLOUDORA) }
         cursor.setNotificationUri(
             context!!.contentResolver,
             DocumentsContract.buildChildDocumentsUri(authority, parentDocumentId),
@@ -136,7 +136,7 @@ class DriveDocumentsProvider : DocumentsProvider() {
     }
 
     override fun querySearchDocuments(rootId: String, query: String, projection: Array<out String>?): Cursor {
-        val running = telegriveRunning()
+        val running = cloudoraRunning()
         val cursor = MatrixCursor(projection ?: DOCUMENT_COLUMNS)
         // The name as typed, with LIKE's own characters taken literally.
         val pattern = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
@@ -175,7 +175,7 @@ class DriveDocumentsProvider : DocumentsProvider() {
     }
 
     override fun openDocument(documentId: String, mode: String, signal: CancellationSignal?): ParcelFileDescriptor {
-        if (mode != "r") throw UnsupportedOperationException("Telegrive is read-only here")
+        if (mode != "r") throw UnsupportedOperationException("Cloudora is read-only here")
         if (!documentId.startsWith(FILE)) throw FileNotFoundException("Not a file: $documentId")
         val fileId = documentId.removePrefix(FILE)
         val found = try {
@@ -191,12 +191,12 @@ class DriveDocumentsProvider : DocumentsProvider() {
         } catch (e: SQLiteException) {
             throw FileNotFoundException(UNREADABLE)
         }
-        val file = found ?: throw FileNotFoundException("Telegrive has no $documentId")
+        val file = found ?: throw FileNotFoundException("Cloudora has no $documentId")
 
         file.copy?.let { return ParcelFileDescriptor.open(it, ParcelFileDescriptor.MODE_READ_ONLY) }
         val context = context!!
         val endpoint = BridgeReader.endpoint(context)?.takeIf { BridgeReader.alive(it) }
-            ?: throw FileNotFoundException("Open Telegrive to get ${file.name}")
+            ?: throw FileNotFoundException("Open Cloudora to get ${file.name}")
         return try {
             BridgeReader.open(context, endpoint, fileId, file.name, file.size, signal)
         } catch (e: IOException) {
@@ -225,8 +225,8 @@ class DriveDocumentsProvider : DocumentsProvider() {
         }
     }
 
-    /** Whether Telegrive is running with the drive open, so a file not on the phone can stream. */
-    private fun telegriveRunning(): Boolean = BridgeReader.endpoint(context!!)?.let(BridgeReader::alive) ?: false
+    /** Whether Cloudora is running with the drive open, so a file not on the phone can stream. */
+    private fun cloudoraRunning(): Boolean = BridgeReader.endpoint(context!!)?.let(BridgeReader::alive) ?: false
 
     /**
      * Each file's copies on this phone, kept offline or downloaded, by file
@@ -277,7 +277,7 @@ class DriveDocumentsProvider : DocumentsProvider() {
 
     /**
      * Adds a row per file in [rows]. A file on the phone says so; one that
-     * isn't says Telegrive needs to be open while it is not [running], and
+     * isn't says Cloudora needs to be open while it is not [running], and
      * nothing while it is, since it opens as it downloads.
      */
     private fun addFiles(cursor: MatrixCursor, rows: Cursor, copies: Map<String, List<String>>, running: Boolean) {
@@ -294,7 +294,7 @@ class DriveDocumentsProvider : DocumentsProvider() {
                     Document.COLUMN_SUMMARY,
                     when {
                         copies.onPhone(id) != null -> "On this phone"
-                        !running -> "Open Telegrive to get this file"
+                        !running -> "Open Cloudora to get this file"
                         else -> null
                     },
                 )
@@ -307,15 +307,15 @@ class DriveDocumentsProvider : DocumentsProvider() {
         }
 
     companion object {
-        private const val DATABASE = "telegrive.sqlite"
-        private const val TITLE = "Telegrive"
+        private const val DATABASE = "cloudora.sqlite"
+        private const val TITLE = "Cloudora"
         private const val ROOT_ID = "drive"
         private const val ROOT = "root"
         private const val FOLDER = "d:"
         private const val FILE = "f:"
         private const val ANY_FILE = "application/octet-stream"
-        private const val NEEDS_TELEGRIVE = "Files not on this phone need Telegrive open. Open it, then come back."
-        private const val UNREADABLE = "Open Telegrive, then try again."
+        private const val NEEDS_CLOUDORA = "Files not on this phone need Cloudora open. Open it, then come back."
+        private const val UNREADABLE = "Open Cloudora, then try again."
 
         // What the index is read with. test/picker_contract_test.dart keeps
         // a copy of each statement, runs it against the app's schema and

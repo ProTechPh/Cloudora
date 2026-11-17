@@ -4,11 +4,11 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 /// Reads what a media file on this phone says about itself, through the
-/// telegrive/media channel. Android answers from the file's own headers;
+/// cloudora/media channel. Android answers from the file's own headers;
 /// anywhere else, and whenever the file can't be read, the answer is null
 /// and the caller carries on without it.
 abstract final class MediaProbe {
-  static const _channel = MethodChannel('telegrive/media');
+  static const _channel = MethodChannel('cloudora/media');
 
   static bool _asks = !kIsWeb && Platform.isAndroid;
 

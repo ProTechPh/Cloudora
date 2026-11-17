@@ -392,7 +392,7 @@ class DriveSetup extends Notifier<SetupState> {
 
   Future<_DriveChannel?> _searchByTitle() async {
     final candidates = <int>{};
-    for (final title in const [channelTitle, 'Telegrive']) {
+    for (final title in const [channelTitle, 'Cloudora']) {
       for (final request in [
         td.SearchChatsOnServer(query: title, limit: 50),
         td.SearchChats(query: title, limit: 50),

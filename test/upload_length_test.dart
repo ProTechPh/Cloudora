@@ -77,7 +77,7 @@ void main() {
   late TransferQueue queue;
 
   setUp(() async {
-    dir = await Directory.systemTemp.createTemp('telegrive_length');
+    dir = await Directory.systemTemp.createTemp('cloudora_length');
     db = AppDatabase(NativeDatabase.memory());
     telegram = _UploadTelegram();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -153,7 +153,7 @@ void main() {
   });
 
   group('the date taken', () {
-    const media = MethodChannel('telegrive/media');
+    const media = MethodChannel('cloudora/media');
     final taken = DateTime.utc(2024, 7, 14, 9, 30);
 
     /// What the file was asked, as `takenAtMs video` or `takenAtMs photo`.

@@ -8,7 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 class PageReader {
   const PageReader();
 
-  static const _channel = MethodChannel('telegrive/text');
+  static const _channel = MethodChannel('cloudora/text');
 
   /// The text on [pages] (counted from 0) of the PDF at [path], at most
   /// about [maxChars] of it. Null when the phone can't read pages yet, as

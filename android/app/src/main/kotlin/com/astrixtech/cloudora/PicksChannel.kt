@@ -1,4 +1,4 @@
-package dev.ragoose.telegrive
+package com.astrixtech.cloudora
 
 import android.content.ActivityNotFoundException
 import android.net.Uri
@@ -44,7 +44,7 @@ class PicksChannel(
     private val copies: Executor = Executors.newCachedThreadPool()
 
     fun attach(messenger: BinaryMessenger) {
-        MethodChannel(messenger, "telegrive/picks").setMethodCallHandler { call, result ->
+        MethodChannel(messenger, "cloudora/picks").setMethodCallHandler { call, result ->
             when (call.method) {
                 "pick" -> pick(result, media = call.argument<Boolean>("media") == true)
                 "copy" -> answer(result, copies) { copy(Uri.parse(call.text("uri")), File(call.text("out"))) }

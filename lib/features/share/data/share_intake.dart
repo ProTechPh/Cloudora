@@ -59,7 +59,7 @@ class SharedFile {
 /// arrives into the cache, unless it can be read where it is, and holds it
 /// until the drive is open to take it.
 class ShareIntake extends Notifier<List<SharedFile>> {
-  static const _channel = MethodChannel('telegrive/share');
+  static const _channel = MethodChannel('cloudora/share');
 
   @override
   List<SharedFile> build() {

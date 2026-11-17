@@ -185,7 +185,7 @@ public class CloudoraIconGenerator {
 
         string sourceDir = Path.Combine(projectRoot, "tool", "icon", "source");
         if (!Directory.Exists(sourceDir)) Directory.CreateDirectory(sourceDir);
-        string masterPath = Path.Combine(sourceDir, "telegrive.png");
+        string masterPath = Path.Combine(sourceDir, "cloudora.png");
         using (Bitmap master = RenderOnCanvas(cleanMark, 2048, 2048, 0.90, null)) {
             master.Save(masterPath, ImageFormat.Png);
         }
@@ -243,7 +243,7 @@ public class CloudoraIconGenerator {
 
             SaveImage(cleanMark, adaptSize, adaptSize, 0.64, null, Path.Combine(d, "ic_launcher_foreground.png"), ImageFormat.Png);
             SaveImage(monoMark, adaptSize, adaptSize, 0.64, null, Path.Combine(d, "ic_launcher_monochrome.png"), ImageFormat.Png);
-            SaveImage(monoMark, notifSize, notifSize, 0.86, null, Path.Combine(d, "ic_stat_telegrive.png"), ImageFormat.Png);
+            SaveImage(monoMark, notifSize, notifSize, 0.86, null, Path.Combine(d, "ic_stat_cloudora.png"), ImageFormat.Png);
         }
 
         Console.WriteLine("Step 4: Generating iOS Icons...");

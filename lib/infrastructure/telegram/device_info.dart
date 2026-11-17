@@ -9,7 +9,7 @@ import '../../core/config/app_config.dart';
 /// What this phone is, for Telegram's Devices list: the model as Android
 /// names it and the Android version.
 abstract final class DeviceInfo {
-  static const _channel = MethodChannel('telegrive/device');
+  static const _channel = MethodChannel('cloudora/device');
 
   /// The last answer, kept for the background backup job's engine, which
   /// has none of the app's own channels; without it, the job's connection

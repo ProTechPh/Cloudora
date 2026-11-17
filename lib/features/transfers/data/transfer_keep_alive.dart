@@ -75,7 +75,7 @@ class TransferKeepAlive {
 
   /// The manifest entry naming the notification's small icon.
   static const NotificationIcon _icon = NotificationIcon(
-    metaDataName: 'dev.ragoose.telegrive.STAT_ICON',
+    metaDataName: 'com.astrixtech.cloudora.STAT_ICON',
   );
 
   bool _running = false;

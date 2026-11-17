@@ -1,4 +1,4 @@
-// Renders every picture of the mark from source/telegrive.png: the app's
+// Renders every picture of the mark from source/cloudora.png: the app's
 // own copy of it, the launcher icons, the notification icon and the channel
 // photo:
 //
@@ -52,7 +52,7 @@ void main() {
   /// The launcher mark, read from its source image, with the box its
   /// visible pixels take up.
   Future<(ui.Image, Rect)> loadMark(WidgetTester tester) async {
-    final bytes = File('tool/icon/source/telegrive.png').readAsBytesSync();
+    final bytes = File('tool/icon/source/cloudora.png').readAsBytesSync();
     final (image, pixels) = (await tester.runAsync(() async {
       final frame = await (await ui.instantiateImageCodec(bytes)).getNextFrame();
       final data = await frame.image.toByteData();

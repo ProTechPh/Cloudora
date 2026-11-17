@@ -27,7 +27,7 @@ import UserNotifications
 /// itself is plain file copying into Documents, done from Dart.
 enum DeviceStorage {
   static func register(with messenger: FlutterBinaryMessenger) {
-    let channel = FlutterMethodChannel(name: "telegrive/device_storage", binaryMessenger: messenger)
+    let channel = FlutterMethodChannel(name: "cloudora/device_storage", binaryMessenger: messenger)
     channel.setMethodCallHandler { call, result in
       switch call.method {
       case "freeBytes":
