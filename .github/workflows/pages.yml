@@ -27,6 +27,17 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
+      # The repository is private, so the site cannot ask GitHub for the latest
+      # release itself. Publish it alongside the page instead.
+      - name: Write the latest release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -fsS -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/latest" \
+            -o docs/latest.json || echo '{}' > docs/latest.json
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:

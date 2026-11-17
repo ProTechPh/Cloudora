@@ -80,10 +80,10 @@
   $$('[data-year]').forEach(function (el) { el.textContent = String(new Date().getFullYear()); });
 
   // ── Release ────────────────────────────────────────────────────────────
-  // The latest release is looked up from GitHub, so a new version needs no
-  // edit here. GitHub allows 60 lookups an hour per address, and visitors who
-  // share one (a mobile carrier, an office) can run out; they get the release
-  // below, so bump FALLBACK_VERSION when publishing.
+  // The latest release is looked up from GitHub, and from latest.json written
+  // next to this page when GitHub will not answer (a private repository, or a
+  // visitor who has run out of lookups). Bump FALLBACK_VERSION when publishing:
+  // it is what a visitor with no network at all sees.
 
   var REPO = 'protechph/Cloudora';
   var FALLBACK_VERSION = '1.0.0';
@@ -170,17 +170,21 @@
     if (!window.fetch) return;
     var ctrl = window.AbortController ? new AbortController() : null;
     var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, 6000);
-    fetch('https://api.github.com/repos/' + REPO + '/releases/latest', {
-      headers: { Accept: 'application/vnd.github+json' },
-      signal: ctrl ? ctrl.signal : undefined
-    })
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (data) {
-        var found = readRelease(data);
-        if (found) {
-          store('sessionStorage', 'cloudora-release', JSON.stringify({ at: Date.now(), release: found }));
-          useRelease(found);
-        }
+    // The manifest written next to the page is the fallback: GitHub only
+    // answers for a public repository, and visitors sharing one address can
+    // run out of lookups.
+    function load(url, headers) {
+      return fetch(url, { headers: headers, signal: ctrl ? ctrl.signal : undefined })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(readRelease);
+    }
+
+    load('https://api.github.com/repos/' + REPO + '/releases/latest', { Accept: 'application/vnd.github+json' })
+      .then(function (found) { return found || load('latest.json'); })
+      .then(function (found) {
+        if (!found) return;
+        store('sessionStorage', 'cloudora-release', JSON.stringify({ at: Date.now(), release: found }));
+        useRelease(found);
       })
       .catch(function () {})
       .then(function () { clearTimeout(timer); });

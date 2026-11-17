@@ -12,8 +12,25 @@ permissions:
   contents: write
 
 jobs:
+  # The release tag comes from pubspec.yaml, so bumping the version there
+  # starts a new release instead of reusing the last one.
+  version:
+    name: Read version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.read.outputs.tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Read version from pubspec.yaml
+        id: read
+        run: |
+          echo "tag=v$(sed -n 's/^version: *//p' pubspec.yaml | cut -d+ -f1)" >> "$GITHUB_OUTPUT"
+
   build-apk:
     name: Build Android APK
+    needs: version
     runs-on: ubuntu-latest
 
     steps:
@@ -37,27 +54,38 @@ jobs:
 
       - name: Build Android APK
         run: |
-          flutter build apk --release \
+          flutter build apk --release --split-per-abi \
             --android-skip-build-dependency-validation \
             --dart-define=TELEGRAM_API_ID="${{ secrets.TELEGRAM_API_ID }}" \
             --dart-define=TELEGRAM_API_HASH="${{ secrets.TELEGRAM_API_HASH }}"
 
-      - name: Upload APK artifact
+      # The website links to these names, so the release assets match them.
+      - name: Name release files
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          mkdir -p dist
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            cp "build/app/outputs/flutter-apk/app-$abi-release.apk" "dist/cloudora-${TAG#v}-$abi.apk"
+          done
+          ls -lh dist
+
+      - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
         with:
           name: cloudora-release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
-          if-no-files-found: warn
+          path: dist/*.apk
+          if-no-files-found: error
 
       - name: Create or Update GitHub Release
         if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v1.0.0' }}
-          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'Cloudora v1.0.0' }}
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || needs.version.outputs.tag }}
+          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('Cloudora {0}', needs.version.outputs.tag) }}
           draft: false
           prerelease: false
-          files: build/app/outputs/flutter-apk/app-release.apk
+          files: dist/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -68,6 +96,7 @@ jobs:
   build-ipa:
     name: Build iOS IPA
     if: github.event_name != 'pull_request'
+    needs: version
     runs-on: macos-latest
     timeout-minutes: 300
 
@@ -114,26 +143,28 @@ jobs:
 
       # Flutter does not write an .ipa when codesigning is skipped.
       - name: Package unsigned IPA
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
         run: |
           mkdir -p build/ipa/Payload
           cp -R build/ios/iphoneos/Runner.app build/ipa/Payload/
           cd build/ipa
-          zip -qry ../cloudora-release.ipa Payload
+          zip -qry "../cloudora-${TAG#v}.ipa" Payload
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
           name: cloudora-release-ipa
-          path: build/cloudora-release.ipa
+          path: build/cloudora-*.ipa
           if-no-files-found: error
 
       - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v1.0.0' }}
-          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'Cloudora v1.0.0' }}
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || needs.version.outputs.tag }}
+          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('Cloudora {0}', needs.version.outputs.tag) }}
           draft: false
           prerelease: false
-          files: build/cloudora-release.ipa
+          files: build/cloudora-*.ipa
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
