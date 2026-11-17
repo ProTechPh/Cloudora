@@ -1,0 +1,736 @@
+import 'dart:math' as math;
+
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:photo_manager/photo_manager.dart';
+
+import '../../../app/theme/tokens.dart';
+import '../../../core/format/formatters.dart';
+import '../../../core/widgets/common.dart';
+import '../../../infrastructure/database/app_database.dart';
+import '../../../infrastructure/notifications/app_notifications.dart';
+import '../../../infrastructure/storage/preferences.dart';
+import '../../drive/data/drive_sync.dart';
+import '../../network/data/mobile_data.dart';
+import '../../takeout/data/takeout_files.dart';
+import '../../takeout/data/takeout_import.dart';
+import '../../takeout/presentation/takeout_status.dart';
+import '../data/background_health.dart';
+import '../data/backup_controller.dart';
+import '../data/backup_worker.dart';
+import '../data/phone_folders.dart';
+import '../data/watched_folders.dart';
+import 'backup_card.dart';
+import 'backup_pause_sheet.dart';
+import 'duplicates_sheet.dart';
+import 'free_up_space_sheet.dart';
+import 'watched_folder_sheets.dart';
+
+final _deviceFoldersProvider = FutureProvider.autoDispose<List<DeviceFolder>>(
+  (ref) => ref.read(backupControllerProvider.notifier).deviceFolders(),
+);
+
+/// Everything about photo backup: where it stands, the switch, what and
+/// when to back up, what happens while the app is closed, and the other
+/// phone folders whose new files upload by themselves.
+class BackupScreen extends ConsumerWidget {
+  const BackupScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.colors;
+    final backup = ref.watch(backupControllerProvider);
+    final controller = ref.read(backupControllerProvider.notifier);
+    final prefs = ref.watch(preferencesProvider);
+    final mobileData = prefs.backupMobileData;
+    final limit = ref.watch(mobileDataProvider.select((d) => d.limit));
+    // Originals use mobile data within the limit only when backup may use
+    // mobile data for photos at all.
+    final withinLimit = limit != null && mobileData != BackupMobileData.off;
+    final missing = ref.watch(missingCountProvider).value ?? 0;
+    final folders = PhoneFolders.supported;
+    final watching =
+        folders && (ref.watch(watchedFolderViewsProvider).value?.isNotEmpty ?? false);
+
+    // Photo backup's Mobile data choice governs the watched folders too, so
+    // the group shows while either is in use.
+    final when = [
+      const SectionHeader('When'),
+      ListGroup(
+        children: [
+          ListTile(
+            title: const Text('Mobile data'),
+            subtitle: Text(
+              [
+                mobileData.explanation(folders: watching),
+                if (limit != null && mobileData != BackupMobileData.off)
+                  'Stays within your ${Formatters.bytes(limit, decimals: 0)} monthly limit.',
+              ].join(' '),
+            ),
+            trailing: PopupMenuButton<BackupMobileData>(
+              initialValue: mobileData,
+              onSelected: (choice) async {
+                final watcher = ref.read(watchedFoldersProvider.notifier);
+                await controller.setMobileData(choice);
+                ref.invalidate(preferencesProvider);
+                if (watching) await watcher.followMobileData();
+              },
+              itemBuilder: (_) => [
+                for (final option in BackupMobileData.values)
+                  PopupMenuItem(value: option, child: Text(option.label)),
+              ],
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(mobileData.label, style: context.text.bodyMedium),
+                  Icon(Icons.arrow_drop_down_rounded, color: colors.text3),
+                ],
+              ),
+            ),
+          ),
+          if (backup.enabled)
+            SwitchListTile(
+              title: const Text('Small copies first on mobile data'),
+              subtitle: Text(
+                'About 300 KB a photo, so new photos are safe straight away. '
+                'Originals follow on Wi-Fi${withinLimit ? ' or within your monthly limit' : ''}.',
+              ),
+              value: prefs.backupSmallCopies,
+              onChanged: (on) async {
+                await controller.setSmallCopies(on);
+                ref.invalidate(preferencesProvider);
+              },
+            ),
+        ],
+      ),
+    ];
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Photo backup')),
+      body: ListView(
+        padding: const EdgeInsets.only(bottom: Space.x4),
+        children: [
+          const BackupStatusPanel(),
+          // Home's "Backup stopped" and "Backup is paused" lines open this
+          // screen, so the way to carry on is here too, not only on Home.
+          if (backup.phase
+              case BackupPhase.off ||
+                  BackupPhase.needsPermission ||
+                  BackupPhase.stopped ||
+                  BackupPhase.paused)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(Space.gutter, 0, Space.gutter, Space.s),
+              child: SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: () async {
+                    if (backup.phase == BackupPhase.needsPermission) {
+                      if (!await controller.enable()) await PhotoManager.openSetting();
+                    } else if (backup.phase == BackupPhase.stopped) {
+                      controller.schedule(immediate: true);
+                    } else if (backup.phase == BackupPhase.paused) {
+                      await controller.resume();
+                    } else if (context.mounted) {
+                      await enableBackup(context, ref);
+                    }
+                  },
+                  child: Text(switch (backup.phase) {
+                    BackupPhase.off => 'Turn on backup',
+                    BackupPhase.stopped => 'Retry',
+                    BackupPhase.paused => 'Resume backup',
+                    _ => 'Allow photo access',
+                  }),
+                ),
+              ),
+            ),
+          if (!backup.enabled) ...[
+            if (folders) const _WatchedFolders(),
+            if (watching) ...when,
+            if (TakeoutFiles.supported) const _FromGoogle(),
+          ],
+          const FreeUpSpaceTile(),
+          if (backup.failed > 0 || backup.remaining > 0) ...[
+            const SizedBox(height: Space.s),
+            ListGroup(
+              children: [
+                if (backup.failed > 0)
+                  StatusLine(
+                    icon: Icons.error_outline_rounded,
+                    color: colors.danger,
+                    text: '${Formatters.count(backup.failed, 'item')} didn\'t back up',
+                    detail: 'See which ones and why.',
+                    onTap: () => context.push('/backup/not-backed-up'),
+                  ),
+                if (backup.remaining > 0)
+                  StatusLine(
+                    icon: Icons.schedule_rounded,
+                    text: '${Formatters.count(backup.remaining, 'item')} waiting',
+                    detail: 'See what\'s left, and leave out what you don\'t want.',
+                    onTap: () => context.push('/backup/queue'),
+                  ),
+              ],
+            ),
+          ],
+          if (missing > 0) ...[
+            const SizedBox(height: Space.s),
+            ListGroup(
+              children: [
+                StatusLine(
+                  icon: Icons.cloud_off_outlined,
+                  color: colors.danger,
+                  text:
+                      '${Formatters.count(missing, 'photo')} ${missing == 1 ? 'is' : 'are'} '
+                      'no longer in your drive',
+                  detail:
+                      '${missing == 1 ? 'It was' : 'They were'} removed from the channel '
+                      'outside this phone.',
+                  trailing: TextButton(
+                    onPressed: controller.retryMissing,
+                    child: const Text('Back up again'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+          if (backup.enabled) ...[
+            const _WhatToBackUp(),
+            ...when,
+            const _WhileClosed(),
+            if (folders) const _WatchedFolders(),
+            if (TakeoutFiles.supported) const _FromGoogle(),
+            const SizedBox(height: Space.xxl),
+            const DuplicateBackupsTile(),
+            const SizedBox(height: Space.m),
+            ListGroup(
+              children: [
+                if (backup.phase != BackupPhase.paused)
+                  ListTile(
+                    title: const Text('Pause backup'),
+                    subtitle: const Text('For an hour, until tomorrow, or until you resume it'),
+                    onTap: () => showBackupPauseSheet(context, ref),
+                  ),
+                ListTile(
+                  title: Text(
+                    'Turn off backup',
+                    style: context.text.bodyLarge?.copyWith(color: colors.danger),
+                  ),
+                  onTap: () async {
+                    final confirmed = await showConfirmDialog(
+                      context,
+                      title: 'Turn off backup?',
+                      message:
+                          'Photos already backed up stay in your drive. New '
+                          'ones won\'t be, until you turn it back on.',
+                      confirmLabel: 'Turn off',
+                      destructive: true,
+                    );
+                    if (confirmed) await controller.disable();
+                  },
+                ),
+              ],
+            ),
+          ],
+          Padding(
+            padding: const EdgeInsets.fromLTRB(Space.gutter, Space.xxl, Space.gutter, 0),
+            child: Text(
+              [
+                'Originals go up in full quality to Files › ${BackupController.rootFolder}, '
+                    'in a folder named after where they came from on this phone. '
+                    'Nothing is deleted from your phone.',
+                if (folders)
+                  'Files from other folders go to Files › ${WatchedFoldersController.rootFolder} '
+                      'unless you pick a drive folder. Cloudora checks them when it opens '
+                      'and while it runs. This list stays on this phone.',
+              ].join(' '),
+              style: context.text.bodySmall,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Backup with the app closed: the switch that lets it run on its own and
+/// when it last did, whether Android is letting the checks for new photos
+/// run, with Fix when it isn't, and only when they need it, battery saver
+/// and notifications, each with the way to put it right.
+class _WhileClosed extends ConsumerWidget {
+  const _WhileClosed();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.colors;
+    final prefs = ref.watch(preferencesProvider);
+    final unattended = prefs.backupUnattended;
+    final health = ref.watch(backgroundHealthProvider).value;
+    final lastRun = health?.lastRun ?? prefs.backgroundRun;
+    final uploaded = health?.lastUploaded ?? prefs.backgroundUploaded;
+    final checked = health?.lastChecked;
+    void recheck() => ref.invalidate(backgroundHealthProvider);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SectionHeader('While the app is closed'),
+        ListGroup(
+          children: [
+            SwitchListTile(
+              title: const Text('Back up on its own'),
+              subtitle: Text(
+                prefs.backupMobileData == BackupMobileData.off
+                    ? 'When the phone is charging and on Wi-Fi.'
+                    : 'When the phone is charging.',
+              ),
+              value: unattended,
+              onChanged: (on) async {
+                await ref.read(backupControllerProvider.notifier).setUnattended(on);
+                ref.invalidate(preferencesProvider);
+                recheck();
+              },
+            ),
+            if (unattended)
+              StatusLine(
+                icon: Icons.history_rounded,
+                text: lastRun == null
+                    ? 'Hasn\'t run yet'
+                    : 'Last ran ${Formatters.date(lastRun)} · ${Formatters.count(uploaded, 'item')}',
+                detail: 'Checks new photos as they arrive. Looks through everything once a day.',
+              ),
+            if (health != null) ...[
+              if (health.needsAttention(true))
+                StatusLine(
+                  icon: Icons.error_outline_rounded,
+                  color: colors.danger,
+                  text: 'Not watching for new photos',
+                  detail: checked == null
+                      ? null
+                      : 'Last checked in the background · ${Formatters.date(checked)}',
+                  trailing: TextButton(
+                    onPressed: () async {
+                      await BackupWorker.schedule();
+                      recheck();
+                    },
+                    child: const Text('Fix'),
+                  ),
+                )
+              else
+                StatusLine(
+                  icon: Icons.check_circle_outline_rounded,
+                  color: colors.success,
+                  text: 'Watching for new photos',
+                  detail: checked == null
+                      ? null
+                      : 'Last checked in the background · ${Formatters.date(checked)}',
+                ),
+              if (!health.batteryOk)
+                StatusLine(
+                  icon: Icons.battery_alert_outlined,
+                  text: 'Battery saver may stop backup',
+                  detail: 'Set Cloudora to Unrestricted in battery settings.',
+                  trailing: TextButton(
+                    onPressed: () async {
+                      await BatterySettings.open();
+                      recheck();
+                    },
+                    child: const Text('Open'),
+                  ),
+                ),
+              if (!health.notificationsOk)
+                StatusLine(
+                  icon: Icons.notifications_off_outlined,
+                  text: 'Notifications are off',
+                  detail: 'You won\'t hear about new photos waiting.',
+                  trailing: TextButton(
+                    onPressed: () async {
+                      await AppNotifications.openSettings();
+                      recheck();
+                    },
+                    child: const Text('Turn on'),
+                  ),
+                ),
+            ],
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// Videos and the phone's photo folders, shut to one line that sums them up
+/// until the person opens it, since the folder list runs long.
+class _WhatToBackUp extends ConsumerWidget {
+  const _WhatToBackUp();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.colors;
+    final prefs = ref.watch(preferencesProvider);
+    final controller = ref.read(backupControllerProvider.notifier);
+    final open = prefs.backupChoicesOpen;
+    Future<void> toggle() async {
+      await prefs.setBackupChoicesOpen(!open);
+      ref.invalidate(preferencesProvider);
+    }
+
+    final folders = ref.watch(_deviceFoldersProvider).value;
+    final modes = [for (final folder in folders ?? const <DeviceFolder>[]) controller.modeOf(folder.name)];
+    final keptOut = modes.where((m) => m == FolderBackupMode.keptOut).length;
+    final off = modes.where((m) => m == FolderBackupMode.off).length;
+    final summary = [
+      if (folders != null) Formatters.count(folders.length, 'folder'),
+      if (keptOut > 0) '$keptOut kept out of Photos',
+      if (off > 0) '$off not backed up',
+    ].join(' · ');
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SectionHeader(
+          'What to back up',
+          trailing: IconButton(
+            onPressed: toggle,
+            tooltip: open ? 'Hide' : 'Show',
+            icon: Icon(open ? Icons.expand_less_rounded : Icons.expand_more_rounded, color: colors.text2),
+          ),
+        ),
+        AnimatedSize(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          alignment: Alignment.topCenter,
+          child: ListGroup(
+            children: open
+                ? [
+                    SwitchListTile(
+                      title: const Text('Videos'),
+                      subtitle: const Text('Photos are always included'),
+                      value: prefs.backupVideos,
+                      onChanged: (value) async {
+                        await controller.setIncludeVideos(value);
+                        ref.invalidate(preferencesProvider);
+                        ref.invalidate(_deviceFoldersProvider);
+                      },
+                    ),
+                    const _FolderList(),
+                  ]
+                : [
+                    ListTile(
+                      title: Text(prefs.backupVideos ? 'Photos and videos' : 'Photos, without videos'),
+                      subtitle: summary.isEmpty
+                          ? null
+                          : Text(summary, style: context.text.bodySmall?.copyWith(fontFeatures: tabularFigures)),
+                      onTap: toggle,
+                    ),
+                  ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _FolderList extends ConsumerWidget {
+  const _FolderList();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.colors;
+    final folders = ref.watch(_deviceFoldersProvider);
+    // Rebuilds the rows once a choice is saved and the preferences reloaded.
+    ref.watch(preferencesProvider);
+    final controller = ref.read(backupControllerProvider.notifier);
+
+    final header = Padding(
+      padding: const EdgeInsets.fromLTRB(Space.gutter, Space.l, Space.gutter, Space.xs),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Folders on this phone', style: context.text.titleSmall),
+          const SizedBox(height: 2),
+          Text('New folders are backed up and shown in Photos.', style: context.text.bodySmall),
+        ],
+      ),
+    );
+
+    return switch (folders) {
+      AsyncData(:final value) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          header,
+          if (value.isEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(Space.gutter, Space.s, Space.gutter, Space.l),
+              child: Text('No photo folders found.', style: context.text.bodyMedium),
+            ),
+          for (final (folder, mode) in [
+            for (final folder in value) (folder, controller.modeOf(folder.name)),
+          ])
+            ListTile(
+              title: Text(folder.name),
+              subtitle: Text(
+                Formatters.count(folder.count, 'item'),
+                style: context.text.bodySmall?.copyWith(fontFeatures: tabularFigures),
+              ),
+              trailing: PopupMenuButton<FolderBackupMode>(
+                initialValue: mode,
+                onSelected: (choice) async {
+                  await controller.setFolderMode(folder.name, choice);
+                  ref.invalidate(preferencesProvider);
+                },
+                itemBuilder: (_) => [
+                  for (final option in FolderBackupMode.values)
+                    PopupMenuItem(value: option, child: Text(option.label)),
+                ],
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(mode.shortLabel, style: context.text.bodyMedium),
+                    Icon(Icons.arrow_drop_down_rounded, color: colors.text3),
+                  ],
+                ),
+              ),
+            ),
+          if (value.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(Space.gutter, Space.xs, Space.gutter, 0),
+              child: Text(
+                'Kept-out folders still back up and stay in Files and Search. '
+                'This choice is kept on this phone only.',
+                style: context.text.bodySmall,
+              ),
+            ),
+          const SizedBox(height: Space.s),
+        ],
+      ),
+      AsyncError() => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          header,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(Space.gutter, Space.s, Space.gutter, Space.l),
+            child: Text('Allow photo access to choose folders.', style: context.text.bodyMedium),
+          ),
+        ],
+      ),
+      _ => const Padding(
+        padding: EdgeInsets.all(Space.xxl),
+        child: Center(child: CircularProgressIndicator()),
+      ),
+    };
+  }
+}
+
+/// The other folders on this phone whose new files upload by themselves,
+/// one row each, and the way to add one.
+class _WatchedFolders extends ConsumerWidget {
+  const _WatchedFolders();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.colors;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SectionHeader('Other folders on this phone'),
+        AsyncView<List<WatchedFolderView>>(
+          value: ref.watch(watchedFolderViewsProvider),
+          data: (views) => AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+            alignment: Alignment.topCenter,
+            child: ListGroup(
+              children: [
+                for (final view in views) _WatchedFolderRow(view, key: ValueKey(view.row.id)),
+                ListTile(
+                  leading: Icon(Icons.add_rounded, color: colors.text2),
+                  title: const Text('Add a folder'),
+                  subtitle: views.isEmpty
+                      ? const Text(
+                          'New files in it upload by themselves, like Recordings or '
+                          'Download › Bank.',
+                        )
+                      : null,
+                  onTap: () => showAddWatchedFolder(context, ref),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _WatchedFolderRow extends ConsumerWidget {
+  const _WatchedFolderRow(this.view, {super.key});
+
+  final WatchedFolderView view;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.colors;
+    final status = view.status;
+    void open() => showWatchedFolderSheet(context, ref, view);
+
+    switch (status.phase) {
+      case RulePhase.noAccess:
+        return StatusLine(
+          icon: Icons.error_outline_rounded,
+          color: colors.danger,
+          text: view.row.label,
+          detail: 'Cloudora can\'t read this folder any more.',
+          trailing: TextButton(
+            onPressed: () => chooseWatchedFolderAgain(context, ref, view),
+            child: const Text('Choose again'),
+          ),
+          onTap: open,
+        );
+      case RulePhase.waitingForWifi:
+        return StatusLine(
+          icon: Icons.folder_outlined,
+          text: view.row.label,
+          detail: status.waiting == 1
+              ? '1 file waits for Wi-Fi.'
+              : '${Formatters.count(status.waiting, 'file')} wait for Wi-Fi.',
+          trailing: TextButton(
+            onPressed: () async {
+              await ref.read(watchedFoldersProvider.notifier).useMobileData();
+              ref.invalidate(preferencesProvider);
+            },
+            child: const Text('Use data'),
+          ),
+          onTap: open,
+        );
+      case RulePhase.uploading:
+        final going = math.min(status.done + 1, status.total);
+        return TweenAnimationBuilder<double>(
+          tween: Tween(end: status.progress),
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          builder: (context, progress, _) => StatusLine(
+            icon: Icons.folder_outlined,
+            text: view.row.label,
+            detail: [
+              'Uploading ${Formatters.number(going)} of ${Formatters.number(status.total)}',
+              ?status.current,
+            ].join(' · '),
+            progress: progress,
+            onTap: open,
+          ),
+        );
+      case RulePhase.waitingForSync:
+        final syncFailed = ref.watch(driveSyncProvider.select((s) => s.error != null));
+        return StatusLine(
+          icon: Icons.folder_outlined,
+          text: view.row.label,
+          detail: syncFailed
+              ? 'Waits until the drive syncs without an error.'
+              : 'Waits until the drive has synced in full.',
+          onTap: open,
+        );
+      case RulePhase.idle || RulePhase.checking:
+        return StatusLine(
+          icon: Icons.folder_outlined,
+          color: status.failed > 0 ? colors.danger : null,
+          text: view.row.label,
+          detail: watchedFolderDetail(view),
+          detailLines: 4,
+          trailing: status.failed > 0
+              ? TextButton(
+                  onPressed: () => ref.read(watchedFoldersProvider.notifier).retryFailed(view.row.id),
+                  child: const Text('Retry'),
+                )
+              : null,
+          onTap: open,
+        );
+    }
+  }
+}
+
+/// What an idle watched folder's row says: how many of its files went up,
+/// where to and when it was last checked, then what that check left on the
+/// phone and why.
+@visibleForTesting
+String watchedFolderDetail(WatchedFolderView view) {
+  final checked = view.row.checkedAt;
+  if (checked == null) return 'Not checked yet';
+  final status = view.status;
+  String files(int n, String one, String many) =>
+      n == 1 ? '1 file $one' : '${Formatters.number(n)} files $many';
+  final parts = [
+    '${Formatters.number(view.uploadedCount)} uploaded to ${view.destinationLabel} · '
+        'checked ${Formatters.date(checked)}',
+    if (status.failed > 0) files(status.failed, 'couldn\'t upload', 'couldn\'t upload'),
+    if (status.settling > 0)
+      status.settling == 1
+          ? '1 new file goes up in a minute'
+          : '${Formatters.number(status.settling)} new files go up in a minute',
+    if (status.leftOut > 0)
+      switch (view.row.filter) {
+        WatchFilter.audio => files(
+          status.leftOut,
+          'isn\'t audio, so it stays on the phone',
+          'aren\'t audio, so they stay on the phone',
+        ),
+        _ => files(
+          status.leftOut,
+          'isn\'t a document or PDF, so it stays on the phone',
+          'aren\'t documents or PDFs, so they stay on the phone',
+        ),
+      },
+    if (status.truncated)
+      'Only the first ${Formatters.number(PhoneFolders.listLimit)} files are checked',
+  ];
+  return parts.length == 1 ? parts.single : '${parts.join('. ')}.';
+}
+
+/// The way into importing a Google Photos library, or where an import
+/// stands once one has parts.
+class _FromGoogle extends ConsumerWidget {
+  const _FromGoogle();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.colors;
+    final state = ref.watch(takeoutImportProvider);
+    final started = state.progress != null || state.phase == TakeoutPhase.reading;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SectionHeader('From Google Photos'),
+        ListGroup(
+          children: [
+            if (started)
+              const TakeoutStatusLine()
+            else
+              ListTile(
+                leading: Icon(Icons.photo_library_outlined, color: colors.text2),
+                title: const Text('Import from Google Photos'),
+                subtitle: const Text('Bring in your library, albums and all, with Google Takeout.'),
+                onTap: () => context.push('/takeout'),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// The Mobile data choice, in the words the Backup screen uses.
+extension on BackupMobileData {
+  String get label => switch (this) {
+    BackupMobileData.off => 'Don\'t use',
+    BackupMobileData.photos => 'Photos only',
+    BackupMobileData.all => 'Photos and videos',
+  };
+
+  /// What the choice means, naming the files from other [folders] where
+  /// it treats them apart from photos.
+  String explanation({required bool folders}) => switch (this) {
+    BackupMobileData.off => 'Uploads wait for Wi-Fi.',
+    BackupMobileData.photos =>
+      folders ? 'Videos and files from other folders wait for Wi-Fi.' : 'Videos wait for Wi-Fi.',
+    BackupMobileData.all => 'Everything goes up on mobile data.',
+  };
+}

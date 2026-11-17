@@ -1,0 +1,1087 @@
+# Cloudora technical overview
+
+How Cloudora stores a drive in Telegram, how the app keeps it in step, and
+how to build and work on it. The user-facing summary is in
+[README.md](README.md); the design system is in [DESIGN.md](DESIGN.md).
+
+- [Architecture](#architecture)
+- [The drive in Telegram](#the-drive-in-telegram)
+- [On the phone](#on-the-phone)
+- [Transfers](#transfers)
+- [Photo backup](#photo-backup)
+- [Behaviour in detail](#behaviour-in-detail)
+- [Known limits](#known-limits)
+- [Project layout](#project-layout)
+- [Development](#development)
+- [Releases](#releases)
+- [Website](#website)
+- [Tips](#tips)
+- [Platform support and roadmap](#platform-support-and-roadmap)
+
+## Architecture
+
+```text
+Telegram (source of truth)                    This phone
+┌────────────────────────────────────┐  sync  ┌──────────────────────────────┐
+│ private channel "Cloudora"         │ ─────▶ │ index (Drift / SQLite)       │
+│  • drive message (pinned) tgdrive2  │ live + │  folders · files · parts     │
+│  • folder messages        tgfolder2 │ catch- │  albums · offline · backup   │
+│  • album messages         tgalbum2  │  up    │                              │
+│  • file messages          tgfile2   │        │ transfer queue (persisted)   │
+│  • later parts of splits  tgpart2   │ ◀───── │ waiting changes (outbox)     │
+│  • copy of the index      tgindex2  │ changes│                              │
+└────────────────────────────────────┘        └──────────────────────────────┘
+```
+
+Telegram is the source of truth. Every file, folder and album is a message
+in one private channel, and each message carries everything needed to
+rebuild the drive from Telegram alone. The phone keeps an index of the
+channel for speed and offline use, writes every change to Telegram first,
+and indexes what Telegram hands back.
+
+The app is Flutter, talking to Telegram through TDLib (1.8.36, through
+`handy_tdlib`) as an ordinary user account. Riverpod 3 holds state,
+go_router navigates (the sign-in screens follow TDLib's authorization state
+rather than being pushed by hand), and Drift keeps the index. TDLib types
+stay inside `infrastructure/` and `features/*/data`.
+
+## The drive in Telegram
+
+### What people see in Telegram
+
+Open the Cloudora channel in any Telegram app and it reads as a file list:
+
+- Each file is a message: its name in bold, its folder as a hashtag, and
+  `#starred` or `#trash` when they apply. Tapping `#Invoices` lists
+  everything in that folder.
+- Each folder is a short message of its own, saying which folder it is in.
+- The message pinned at the top is the drive message, which says what the
+  channel is.
+- At the bottom of each message, folded under a spoiler, is the details
+  line Cloudora reads back. It is best left as it is.
+- A file bigger than one message allows shows as numbered parts
+  (`movie.mkv.001`, `movie.mkv.002`, …), which only Cloudora joins back
+  ([Split files](#split-files)).
+- A file forwarded into the channel shows up in the drive, and a folder
+  name such as `Wedding`, written as the forward's comment, files it there
+  ([Forwards and adopted files](#forwards-and-adopted-files)).
+
+The channel is the drive. Deleting a message deletes that file, deleting
+the channel deletes the drive, and an auto-delete timer on the channel
+deletes files when it runs out (Check my drive warns about one and can
+turn it off). The channel is private with only the account in it, but
+like any Telegram cloud chat it isn't end-to-end encrypted, so the drive
+is as safe as the account; Check my drive says whether two-step
+verification is on.
+
+### The channel, and how it is found
+
+The drive is a private channel, titled **Cloudora**, that the account
+created. Its first open makes it: Cloudora creates the channel with a
+plain description, moves it to the Archive so it stays out of the chat
+list, sets the app icon as its photo, then sends the **drive message** and
+pins it silently.
+
+The drive message is what marks a channel as a drive. To find the drive on
+a phone, Cloudora:
+
+1. Checks the channel this phone last used for the account, if any, and
+   that the account still created it.
+2. Otherwise searches the account's chats for channels titled Cloudora.
+   If none qualifies, it loads the chat lists and checks every archived
+   channel, which also finds a drive someone renamed.
+3. Takes a candidate only if the account created it and the drive message
+   is in it: the message pinned last, another pinned message, or, should
+   it have come unpinned, one Telegram's search finds by its kind
+   (`tgdrive2`). The channel's title and description are left to people.
+4. Creates a new drive when nothing qualifies.
+
+The phone remembers the drive message's id, and each open checks that one
+message is still there, pinning it again if it came unpinned and sending a
+new one only when Telegram answers that there is none, so a lookup that
+fails never leaves two.
+
+### Message kinds
+
+| Kind | Message | Holds |
+| --- | --- | --- |
+| `tgdrive2` | Text, pinned | The drive itself: its id and where the copy of the index is |
+| `tgfolder2` | Text | One folder |
+| `tgalbum2` | Text | One album |
+| `tgfile2` | Document | One file, or the first part of a split file |
+| `tgpart2` | Document | A later part of a split file |
+| `tgindex2` | Document | A copy of the index (`telegrive-index.json.gz`) |
+
+The `2` is the version of the format. A later format that an older app
+couldn't read would take a new kind.
+
+### How a message reads
+
+Each record has a part for people and a part for the app:
+
+```text
+Quarterly report.pdf                  ← bold: the name
+#Invoices #starred                    ← tags, tappable in Telegram
+Part 1 of 3                           ← notes
+┃ Cloudora details                   ← quote, folded to three lines
+┃ tgfile2;id=…;name=…;folder=…;…      ← spoiler: the details line
+```
+
+- **The first line**, in bold, is the name, shortened to 96 characters
+  with an ellipsis. Folders start with 📁 and albums with 🖼.
+- **The tags line** has the folder's hashtag (for a file, the folder it is
+  in; for a folder, its own, then `· in #Parent`), `#starred` and
+  `#trash` when they apply. TDLib makes them tappable on its own.
+- **The notes line** says `Part n of N` on a split file's first part and
+  `Small copy, the original follows` on a small copy.
+- **The details line** sits in an expandable quote under the label
+  "Cloudora details", and under a spoiler, so it takes at most three
+  lines and reads as noise until tapped. It is the only line read back.
+
+A caption keeps to 1024 characters, Telegram's limit without Premium, even
+on Premium, so an edit after Premium lapses still fits. When it would run
+over, the notes go first, then the tags, then the bold name is shortened;
+the details line is never cut.
+
+Only the details line is read back, so the human lines can change without
+changing the format.
+
+### The details line
+
+```text
+<kind>;<key>=<value>;<key>=<value>;…
+```
+
+- The line starts with the kind. The last line of a message that starts
+  with a known kind is the one read.
+- Fields are split by `;` and each splits at its first `=`. A key written
+  twice keeps its last value.
+- Values are written as they are, except for characters that would break
+  the line or that Telegram would turn into a hashtag, mention or cashtag.
+  Those are written as `%` and their UTF-8 bytes in hex: `%`, `;`, `#`,
+  `@`, `$`, line breaks and other control characters, and the direction
+  marks Telegram strips from text (U+200E, U+200F, U+2028–U+202E, U+0333,
+  U+033F, U+030A, U+FEFF). In a list, `,` separates items and is escaped
+  inside one.
+- A field this version knows but can't read (`size=big`) is left out, and
+  the record then stands or falls on whether it can do without it.
+
+A file whose name is `Q3; 100% #final.pdf` is written
+`name=Q3%3B 100%25 %23final.pdf`.
+
+### Fields
+
+Times are Unix epoch milliseconds. Sizes are bytes. Ids are described
+under [Ids and numbers](#ids-and-numbers).
+
+**`tgfile2`, a file**
+
+| Field | Meaning |
+| --- | --- |
+| `id` | The file's id |
+| `name` | Its name |
+| `folder` | The id of the folder it is in; absent at the root |
+| `type` | MIME type |
+| `size` | Size of the whole file |
+| `parts` | How many parts a split file has; absent when it is whole |
+| `part` | Which part this message is, from 1; only on parts after the first, which carry it when the first part is gone |
+| `star` | `1` when starred |
+| `taken` | When a photo or video was taken |
+| `trashed` | When it went to the trash |
+| `albums` | Ids of the albums it is in, `,` between them |
+| `length` | Length of a video or audio file, in seconds |
+| `replacedby` | Id of the file that took its place, while Replace keeps it in the trash |
+| `original` | Size of the original photo while this message holds a small copy of it |
+| `added` | When it was added to the drive |
+| `changed` | When it was last changed |
+
+**`tgpart2`, a later part of a split file.** Written once, never edited.
+
+| Field | Meaning |
+| --- | --- |
+| `file` | The id of the file it is part of |
+| `part` | Which part it is, from 1; never 1 |
+| `parts` | How many parts the file has |
+| `size` | Size of the whole file |
+
+**`tgfolder2`, a folder**
+
+| Field | Meaning |
+| --- | --- |
+| `id` | The folder's id |
+| `name` | Its name |
+| `parent` | The id of the folder it is in; absent at the root |
+| `star` | `1` when starred |
+| `nophotos` | `1` when its photos and videos, and those of the folders inside it, stay out of the Photos tab |
+| `private` | `1` when it and everything inside it show only in Private |
+| `trashed` | When it went to the trash, with everything inside it |
+| `added`, `changed` | When it was made and last changed |
+
+**`tgalbum2`, an album.** Which files are in it is kept in each file's
+`albums`, so a photo can be in several albums without being copied.
+
+| Field | Meaning |
+| --- | --- |
+| `id` | The album's id |
+| `name` | Its name |
+| `added`, `changed` | When it was made and last changed |
+
+**`tgdrive2`, the drive message**
+
+| Field | Meaning |
+| --- | --- |
+| `id` | The drive's id |
+| `index` | The number of the message holding the copy of the index, once there is one |
+| `added` | When the drive was made |
+
+**`tgindex2`, the copy of the index**
+
+| Field | Meaning |
+| --- | --- |
+| `drive` | The id of the drive it is a copy of |
+| `through` | The number of the newest message it covers |
+| `files` | How many files it holds |
+| `added` | When it was written |
+
+A file's caption on Telegram, details unfolded:
+
+```text
+IMG_2041.HEIC
+#Camera #starred
+Cloudora details
+tgfile2;id=9b2f6d0e-6c1a-4f8e-9d0b-6a2e3c4d5f60;name=IMG_2041.HEIC;folder=0d4c…;type=image/heic;size=3145728;star=1;taken=1759312800000;albums=a1b2c3d4e5f6;added=1759312860000;changed=1759312860000
+```
+
+### Ids and numbers
+
+- **File, folder and drive ids** are random UUIDs (version 4), made on the
+  phone when the item is first created. They never change, so a rename or
+  a move edits one message and nothing that points at the item breaks.
+  Files and folders point at each other by id (`folder`, `parent`,
+  `file`), never by name.
+- **Album ids** are 12 hexadecimal characters.
+- **A file forwarded into the channel** without details has no id of its
+  own, so the index calls it `tg` followed by TDLib's id for its message
+  until it is filed; filing it writes details under that id.
+- **Message numbers** (`index`, `through`, and the `msg` entries of the
+  copy of the index) are Telegram's own numbers for the channel's
+  messages: 1, 2, 3 and on, as in `t.me/c/<channel>/<number>`. TDLib's id
+  for message number *n* is *n* × 2^20; the app converts between them
+  (`MessageNumber`).
+
+The numbers in a details line are sizes in bytes, times in Unix
+milliseconds, `length` in seconds, `parts` and `part` as counts from 1,
+and `star` as `1`.
+
+### Folder tags
+
+A folder's hashtag is made from its name, since Telegram ends a hashtag at
+anything but a letter, digit or `_`: letters, digits, combining marks and
+`_` stay, anything else becomes `_`, runs of `_` become one, and the tag
+is cut at 48 characters. A name with no letter becomes `#folder_…`. So
+`Tax returns 2026` is `#Tax_returns_2026`.
+
+Tags are for people: the drive goes by ids. Two folders with the same name
+share a tag, and a file takes a renamed folder's new tag the next time its
+caption is written, so renaming a folder is still a single edit.
+
+### Split files
+
+Telegram caps a message at 2000 MiB, 4000 MiB with Premium (4000 or 8000
+upload parts of 512 KiB). A bigger file is sent as 512 MiB parts, named
+`movie.mkv.001`, `movie.mkv.002` and so on so they sort in Telegram.
+
+Only the first part's caption says what the file is (`tgfile2`, with
+`parts`). Each later part says only whose part it is (`tgpart2`) and is
+never edited, so renaming, moving or starring a split file is one edit.
+The index follows the first part. A later part read first makes a stand-in
+row, named after the part's file name without its number, for the first
+part to replace, so a full read in any order ends the same. A change to a
+file whose first part is gone is written onto each part left, whole, and
+then those count until a first part turns up.
+
+Parts are much smaller than the cap on purpose: an interrupted upload only
+loses the part in flight, and the temporary copy on the phone stays small.
+
+### Forwards and adopted files
+
+Media in the channel with no details line (a forward, or a file sent from
+another Telegram app) is adopted: it shows at the root, under Forwarded,
+with a made-up id. The plain text message sent just before a burst of
+forwards is its comment. If it names a folder (`Wedding`, a path like
+`Taxes/2026`, or `#Taxes/2026` to make what is missing), each file moves
+there: Telegram copies it into a message of the drive's own, with details,
+and the forward goes. The comment is deleted once every file it covered
+has moved. Only forwards newer than the first read of the channel are
+filed this way, so nothing already there moves on its own. Telegram won't
+edit a forwarded message, which is why filing one copies it.
+
+From ten forwarded files on, a search sits above them that keeps the ones
+with every word of it in their name; Move all and Keep here then become
+Move these and Keep these, and take only what it found.
+
+### The copy of the index
+
+The channel also keeps a copy of the whole index: one document,
+`telegrive-index.json.gz`, captioned `tgindex2`, which the drive message
+points to by number. A phone opening a drive for the first time fills its
+index from the copy and shows Home at once, then reads the channel in full
+behind it and settles whatever changed since the copy was written.
+
+The copy is a head start only; the captions stay what the drive is. A copy
+that is missing, unreadable, of another format or of another drive is
+passed over for the full read, and deleting it changes nothing but how
+fast a new phone opens.
+
+It is gzipped JSON, `format` 2:
+
+```text
+{ "format": 2,
+  "folders": [ { id, p (parent), n (name), msg, ct, mt, tr, st, x } ],
+  "albums":  [ { id, n, msg, ct, mt } ],
+  "files":   [ { id, f (folder), n, m (type), s (size), ct, mt, pc (parts),
+                 st, tk (taken), tr, x (fields a newer version wrote), du,
+                 rb, ad (adopted), lt (original), al (album ids),
+                 parts: [ { i (index from 0), msg, s } ] } ] }
+```
+
+`msg` is a message number. Nothing in it is particular to the phone that
+wrote it: no previews and no TDLib file ids.
+
+A copy is written after a full read of the channel, at most every three
+days, and only when the index has changed since the last one (a
+fingerprint of its contents says so). On a metered connection, mobile data
+or a hotspot, only a copy of up to 1 MB goes; a few thousand files make a
+few hundred kilobytes. Each copy replaces the document in the same
+message, so the pointer never moves.
+
+### Newer versions
+
+Fields a newer version wrote that this one doesn't know are kept in the
+index (`manifest_extra`, as JSON) and written back on every edit, first on
+the line and under their own names, so a rename here never drops them. A
+value goes back onto the line exactly as it came.
+
+## On the phone
+
+- **The index.** A Drift (SQLite) database of folders, files, their parts
+  and albums, plus what belongs to this phone alone: offline copies,
+  recently opened files, backup records, waiting changes. Browsing and
+  search read only the index.
+- **Changes go to Telegram first.** A rename, move, star, trash or album
+  change edits the message, and the index is written from the message
+  Telegram sends back, so it never claims something the channel doesn't
+  have. Messages are sent silently, so nothing notifies.
+- **Without a connection,** a change shows at once, waits on the phone
+  (marked with a clock, listed under Waiting changes), and goes to
+  Telegram in order when the connection is back. Each waiting change is a
+  per-field patch: it is merged onto the message as Telegram has it by
+  then, and a field another device changed meanwhile keeps that device's
+  version, which you are told about.
+- **Sync** runs live while the app is open (new, edited and deleted
+  messages flow straight in), catches up incrementally on open and on
+  pull-to-refresh, and reads the channel in full daily, once after an
+  update that changes how messages are indexed (`MessageIndexer.version`),
+  and from Settings › Rebuild index. A full read drops what the channel no
+  longer has and empties what has been in the trash for 30 days. A read
+  writes what it has read into the index 500 messages at a time, each lot
+  in one transaction, so the screens open meanwhile look again once a lot
+  rather than after every message, which on a drive of thousands of
+  files would make the read take many times longer than the reading.
+  TDLib keeps its own copy of the history and pages over holes in it as
+  if they weren't there, so a full read that finds fewer files than
+  Telegram counts in the channel asks for each message number it passed
+  over directly, a hundred at a time, and TDLib fetches those from
+  Telegram.
+- **Home before Telegram answers.** Each time the drive opens, the phone
+  keeps the account's name and id and which channel holds the drive
+  (never the phone number), and the next start shows Home from them and
+  the index, once the channel has been read in full at least once.
+- **The index belongs to one account.** Signing out wipes it with the sync
+  checkpoints. A different account signing in wipes the previous one's
+  index before its own drive opens. A session ended from Telegram closes
+  the drive and keeps the index for seven days, so signing back in soon
+  shows it at once. A drive found on a new channel has the old channel's
+  index cleared before it is read.
+- **Secrets.** The API credentials and TDLib's database key live in the
+  platform keystore, and TDLib's cache is encrypted from the first launch.
+  A keystore that fails or doesn't answer within 15 seconds, as on some
+  phones with a changed system, stops the splash with what went wrong and
+  Try again, as does TDLib not saying what state it is in within 45
+  seconds; neither is ever taken for no key, which would start the
+  sign-in over.
+- **Never online.** Cloudora sets TDLib's `online` option off once signed
+  in, so browsing the drive doesn't show the account as online to its
+  contacts.
+
+## Transfers
+
+- A queue that survives restarts, with live speed and ETA, pause, resume,
+  cancel and retry. On Android a foreground service keeps it going in the
+  background, and its notification can pause it.
+- Split uploads resume at the last finished part; a send TDLib resumed on
+  its own after a restart is matched by its caption.
+- A dropped connection waits instead of failing, and a request that times
+  out is tried again, up to three times in a row. Telegram's flood waits
+  are counted down and sat out, and when Telegram turns one upload away
+  the others hold off too.
+- Files picked to upload on Android come back from the picker as where
+  each one is, and the queue copies each into its cache only when its
+  upload starts, after checking for room, so hundreds of files picked at
+  once neither wait to be copied nor fill the phone. Access to them lasts
+  while the app runs: one still waiting when Android stops the app fails
+  as no longer available, to be picked again.
+- Copies made for an upload are deleted once it is sent or called off.
+  Whatever no transfer still needs, and that hasn't changed in ten
+  minutes, is swept when the drive opens, once a day and from Space's
+  Clear: the folders the app copies into in its cache and, on iOS, every
+  file in the app's temporary folder, one by one. There the photo library
+  and the file picker put the copies they hand over for backup, album
+  uploads and picks: iOS gives an app no path into the library or another
+  app's files, so each is a copy. Android 11 and later hand over a photo
+  where it lies, and only the app's own copies are deleted.
+- **Upload a folder**, in the "+" sheet on Android, picks a folder in
+  Android's folder picker and sends it up as a folder of its name inside
+  the one open, with the folders inside it made in the drive as they are
+  on the phone, ten levels down and 20,000 files at most. Each folder is
+  made before its files are queued, so uploads start while the rest are
+  still being made. Its files are copied as their uploads start, as picked
+  files are, and the folder is readable while the app runs; no lasting
+  access is kept. Hidden files and folders and empty files stay behind.
+  Into a new folder nothing is asked; into one of the same name already
+  there, a name its folder has asks Replace, Keep both or Skip.
+- **Play in another app**, in a video or audio file's menu on Android,
+  hands the file to another player without downloading it first. The
+  player reads a listener of its own on the loopback address, with its own
+  port and token, that serves that one file; the token that opens every
+  file never leaves the app. It is fetched as it is read, as for the app's
+  own player, and the transfers' service keeps the app running meanwhile,
+  with Stop streaming in its notification. The stream ends after 5 minutes
+  with no reader, or 30 with a reader connected that takes nothing, which
+  is a player left paused. A file already on the phone opens from there.
+  A player that refuses plain HTTP can't use it; most video players don't.
+- A photo or video that goes up without a preview, one picked in Files
+  say, gets one made from the file on Android before its first part, as
+  backup's do: Telegram makes none for a video sent as a file, nor for a
+  HEIC photo.
+- RAW photos (DNG, CR2, CR3, NEF, NRW, ARW, ORF, RW2, RAF, SRW, PEF) count
+  as photos, under the types Android's media store gives them, so they
+  get a preview, show in Photos and open in the photo viewer. Android
+  makes the preview, from the picture a camera keeps inside the file when
+  it can't decode the rest. A photo the app's own decoder can't read, a
+  RAW file or an unusual HEIC or AVIF, is decoded by Android into a
+  screen-sized JPEG in the cache instead, before the viewer gives up. The
+  indexer's version went up with this, so a drive opened after the update
+  is read again in full and RAW files already in it become photos; Make
+  previews then gives them a preview.
+- A photo or video that goes up without a date taken, one picked in Files
+  or in an uploaded folder say, gets the one its camera wrote into it
+  (EXIF for a photo, the video's own header) on Android before its first
+  part, so it sits on that day in Photos rather than the day it went up.
+  A file that holds none goes without, and backup's dates are kept.
+- Before writing a big copy, a part or a download, the phone is checked
+  for room; without it the transfer waits and says how much it needs.
+- On Android 15 and later the service gets six hours in the background a
+  day. When Android ends it there, nothing new starts and a notification
+  says Android paused background transfers; opening Cloudora gives the
+  six hours back, and everything carries on, photo backup and an import
+  included. A running transfer isn't called off: Android freezes the app,
+  which leaves TDLib's work where it was, as a dropped connection does.
+- Starting 50 MB or more on mobile data asks first. Transfers of 200 MB or
+  more started on Wi-Fi step back when the phone moves to mobile data (a
+  setting, on by default). A hotspot counts as mobile data everywhere.
+- Copies from other chats, and files sent from the drive to a chat, are
+  forwards Telegram sends as copies, so nothing is downloaded or
+  uploaded.
+
+## Photo backup
+
+- **Scope.** Every photo, and optionally every video, minus the device
+  folders switched off. Folders that appear later are included.
+  Screenshots and chat folders back up too but stay out of the Photos
+  timeline until shown.
+- **Where it goes.** `Photo backup › <device folder>`, originals in full
+  quality as documents (Telegram would otherwise recompress them), with
+  their capture time and GPS intact, a preview thumbnail so videos have
+  posters, and each video's length.
+- **Exactly once.** Each photo's device id is remembered, and anything
+  already in the drive under the same name and size (after a reinstall, or
+  from an old phone) is recognised and skipped. Backup waits for a full
+  read of the channel before judging that.
+- **Mobile data.** Don't use (the default), Photos only, or Photos and
+  videos, and an optional monthly limit with the day the plan renews.
+  Each photo or video is checked against what is left before it starts.
+- **Small copies first.** With it on, a new photo that can't go up in full
+  yet goes up as a JPEG of about 300 KB, carrying `original` with the
+  original's size. On Wi-Fi, or within the limit, the original takes its
+  place in the same message (`editMessageMedia`), keeping its name,
+  folder, star, albums and trash. Only the phone that took a photo can
+  send its original.
+- **Nothing silently skipped.** A photo that fails is tried again; after
+  three tries it is listed under Backup › Not backed up with the reason,
+  to retry or skip.
+- **The queue, live.** Tapping backup's line on Photos or Transfers opens
+  the Backup queue. Waiting lists the uploads under way, each with how far
+  it has got, then every photo still to go, newest first. A tap opens the
+  phone's own copy full screen, to swipe through the rest, with Back up
+  now. The cross skips a photo, and calls off its upload if one is under
+  way. The photo keeps its failures and any small copy, and Undo puts it
+  back as it was and sends it next. Backed up shows what this run of the
+  app sent up, in the Photos grid with its selection bar, so photos can
+  be trashed (the phone's copy too, if you like), put in albums or sent
+  while the rest follow.
+- **Notices gaps.** After every full read, the photos backed up from this
+  phone are matched against the index, and any whose file is gone are
+  counted, never sent again until you choose to.
+- **Keeps going.** A pass runs when the drive opens, when the app returns
+  to the foreground and when the photo library changes. A pass looks
+  through the whole library once a day, after a change to what is backed
+  up, or after a photo was deleted; otherwise only at photos added since
+  the last pass that finished, so a library of thousands takes about a
+  second.
+- **Pausing.** Pause backup (on the Photo backup screen, the Backup
+  queue, or the notification while backup sends) holds it for an hour,
+  until eight the next morning, or until Resume. Uploads under way are
+  paused in the queue rather than cancelled, no pass starts, and the pause
+  is kept in preferences, so it outlasts the app closing and holds off the
+  background job too. Once its time is up, or on Resume, the paused
+  uploads carry on from where they were, and the pass that reaches each
+  photo follows its upload instead of sending the photo again. Turning
+  backup off ends a pause and cancels what it held.
+- **With the app closed,** Android wakes a small job the moment new photos
+  land (a MediaStore content trigger) and every few hours as a fallback.
+  It posts "N new photos to back up". With Back up on its own turned on,
+  it also asks Android to back them up the next time the phone is charging
+  and on Wi-Fi: that job opens the drive this phone already knows (never
+  searching for, creating or changing a channel), runs a pass for up to
+  eight minutes, and hands Telegram back to the app if the app opens.
+  Only one of the two runs TDLib at a time.
+- **Other folders.** Any folder on the phone can be watched; each new file
+  in it goes up once to Files › Auto upload, or a folder you choose, once
+  it has been left alone for a minute. Android's folder picker grants
+  access to that folder alone, so no storage permission is asked for.
+  Folders are checked while Cloudora is open: when the drive opens, when
+  it comes back to the foreground and after each sync, and only once the
+  drive has synced in full without an error. A folder's row says what its
+  last check left on the phone: files its filter doesn't send, files
+  changed in the last minute, and files that couldn't upload, with a
+  Retry that gives those back their three tries. The sheet that adds a
+  folder counts the files its filter sends out of all those in it. A
+  folder that sends everything has Show in Photos, on when adding and
+  changeable later: off sets Hide from Photos on the drive folder its
+  files go into, making that folder first if needed, so it holds on
+  every phone. A folder kept out by one around it can't be shown from
+  there.
+- **Free up space** deletes the phone's copies of photos and videos that
+  are safely in the drive, optionally keeping the last 30 or 90 days. A
+  photo with only a small copy in the drive is never among them.
+
+## Importing from Google Photos
+
+Google closed every way for an app to read a whole Google Photos library
+in March 2025: the Library API now lists only what the app uploaded, and
+the Picker API strips location, re-encodes videos and says nothing of
+albums. Takeout is the one complete export, so the import reads its zip
+files.
+
+- **Parts.** The person picks the zips Takeout made in Android's document
+  picker. Each keeps a persistable grant (to read, and to delete where its
+  provider allows), so an import of many days survives restarts. A part is
+  read where it lies: the central directory from its end, the JSON files
+  by range, and each photo or video taken out on its own by
+  `ArchivesChannel.kt`, which inflates it into the cache and checks its
+  CRC. Zip64 parts read the same. What a part holds is kept in
+  `takeout_parts`, `takeout_entries` and `takeout_details`, so it is read
+  once.
+- **Details.** Each file is matched with the JSON beside it, in any part:
+  `name.supplemental-metadata.json` or the older `name.json`, cut to 46
+  characters before a counter, with the counter Takeout puts in the file's
+  own name (`IMG_1(1).jpg` against `IMG_1.jpg.supplemental-metadata(1).json`).
+  An edited copy (`-edited` and its translations) goes by its original's,
+  the video of a Live Photo by the photo's, and a name Takeout shortened
+  goes back to the JSON's title. The time taken is the JSON's
+  `photoTakenTime`, else a date in the name, else the file's EXIF or video
+  header. Album folders are the ones whose `metadata.json` gives a title,
+  since Takeout translates folder names.
+- **Once.** A file is known by its size and CRC, so the copy in each
+  album's folder is the same item, and `takeout_items` records what each
+  came to. One the drive already holds isn't sent; it is put in its albums
+  and starred in one edit instead. The drive holds it when a file there
+  has its name and size, as photo backup judges; its name and the second
+  it was taken, which finds the original of a copy Google kept smaller
+  under Storage saver; or its size and that second, which finds one
+  renamed since.
+- **Live Photos.** Google keeps a Live Photo or motion photo as a photo
+  and a short video, and Takeout gives the video beside the photo under its
+  name. When the drive already had the photo before the import, from photo
+  backup say, the video isn't sent: a phone keeps the movement inside the
+  photo file (Samsung's carry a `MotionPhoto_Data` trailer). When the import
+  sends the photo itself, it reads the photo from its part first: a Samsung
+  or Pixel motion photo (`MotionPhoto_Data`, `MotionPhoto="1"`,
+  `MicroVideo="1"`) holds its movement, so the video is left out; an
+  iPhone's doesn't, so its video goes up too. Videos an earlier version sent
+  beside photos the drive already held are offered for the trash, and
+  recorded as held by their photos. Photos shows one tile for each photo:
+  a Live Photo's video, and an original beside its `-edited` copy, stay in
+  Files but not in the grid.
+- **Nothing lost quietly.** Pausing calls off the uploads under way, which
+  deletes the message Telegram was still receiving; the copy stays on the
+  phone and goes up again on resume. After every full read of the channel,
+  each photo the import settled is looked for in the index, and any whose
+  file is gone is counted, with Import again to send it from the parts still
+  on the phone.
+- **Where it goes.** `Google Photos › <year taken>`, or `Google Photos`
+  without a date. Albums reuse one of the same name in the drive, and the
+  first caption carries the albums and the star, so nothing is edited
+  after.
+- **Order.** Part by part, as each part lays its files out, so the first
+  parts finish first and can be deleted from the phone; files whose JSON
+  hasn't turned up go last, in case a part added later has it. Parts can
+  come a few at a time: a deleted part stays on the list as done, so its
+  number still counts, and the details read from it stay for photos in
+  later parts. A photo already settled that a later part puts in another
+  album, or stars, gets that in one edit, and the ledger records what each
+  was given, so nothing the person took away since is put back.
+- **Running.** Two at a time while Cloudora is open, carrying on when it
+  opens again if it was running. Photo backup's Mobile data choice and
+  monthly limit apply, photos and videos told apart as backup tells them.
+  Pausing, here or from the notification, pauses the uploads under way.
+- **Progress** is for the whole import, never the files in hand: the
+  bytes it sent are sampled each second, those of files still going up
+  included, and its speed is what went up over the last minute, the time
+  between files counted, with the time left worked out from every byte
+  still to send. The screen lists the files in hand with what is being
+  done to each; the notification, the line above the bar and Home name the
+  import as one job, `Importing 2,670 of 3,349 · 10 min left · 7.7 MB/s`,
+  beside anything else under way.
+- **Problems** are per part: a download cut short, a file that isn't a
+  zip, a damaged one, or one Android no longer lets Cloudora read, which
+  can be chosen again.
+
+## Uploading an album from the gallery
+
+- **Where from.** Upload an album in the "+" sheet sends it into the
+  folder that is open; the button on Photos › Albums sends it into the
+  root. The sheet lists the gallery's albums, biggest first, leaving out
+  the album of everything, which is photo backup's.
+- **Where it goes.** A folder of the album's name, and a drive album of
+  that name, reused when the drive has one. The first caption carries the
+  album, so nothing is edited after. Each photo or video goes up as backup
+  sends it: the original in full quality, with the time it was taken, a
+  thumbnail and a video's length.
+- **Once.** A photo backup sent from this phone, or one the drive holds
+  under the same name and size, isn't sent again: it joins the album where
+  it is, as one change with Undo. One backup is sending joins it as it
+  lands, and one already going up into the album is left to that upload,
+  so uploading the album again sends only what is missing. A photo that
+  lands counts as backed up from this phone, and backup leaves alone a
+  photo an album upload is sending.
+- **Reading.** The album is read through before anything goes up, behind
+  a count with Cancel. Where the gallery copies each original out for the
+  app, as iOS does, the reading stops once the phone has less than 1 GB
+  free: what was read goes up, and the next upload of the album sends the
+  rest. On Android 11 and later each original is read where it lies.
+  Starting 50 MB or more on mobile data asks first, and a name the folder
+  has already asks Replace, Keep both or Skip, as any upload does.
+
+## Behaviour in detail
+
+**Files and folders.** Create, rename, move and delete folders, with
+breadcrumbs, list and grid views, and sorting by name, date, size or type.
+Show in folder opens the folder a file is in and points it out. A name
+already in a folder asks Replace, Keep both or Skip; Replace puts the old
+file in the trash, marked as replaced, with Restore previous version in
+the new file's Details. Folders can be starred and sit at the top of
+Home. Long-press or Select puts labelled actions in a bar along the
+bottom. Recent lists what you opened, shared or sent on this phone and
+what you added, apart from photos and videos that know when they were
+taken, which Photos shows on that day. Settings › Show Recent on Home
+turns off both Recent and Continue playing on Home, for privacy; neither
+is deleted, and an empty drive still shows how to start.
+
+**Trash and undo.** Deleting moves things to the trash for 30 days.
+Moving, renaming, starring, album changes and restoring all offer Undo for
+six seconds; deleting for good, emptying the trash and deleting an album
+wait ten seconds, with Undo, before anything leaves Telegram. Photos the
+phone still has can be deleted from the phone too, once Undo has had its
+time.
+
+**Photos.** A timeline grouped by month, with a scrubber that names the
+month beside your finger, select-a-month, drag to select, pinch to change
+the grid, albums, Favorites and Videos. Chips above the grid show All,
+only Photos or only Videos, and the timeline runs newest or oldest first;
+both choices are remembered, and the viewer swipes in the same order. The
+timeline keeps to dates, since its months are its sections: Files sorts by
+name, size or type. The viewer flicks down to close
+and up for Details, and plays videos in place. A photo zooms with a pinch
+or a double-tap and pans once zoomed; a pinch wins as its second finger
+lands, before the page swipe or the flick can take the drag, which on
+Android starts after a few pixels. Thumbnails are fetched only
+for what stops on screen, and decoded at the size they are shown; phones
+with little memory start in Save memory. Hide from Photos, in a folder's
+menu, keeps that folder's photos and videos, and those of the folders
+inside it, out of the timeline, Favorites and Videos on every phone; they
+stay in Files, Search and albums. The line above the grid names what is
+kept out, photo backup's Screenshots and chat folders included, with Show,
+which asks for the phone's lock first when app lock is on.
+
+**Private.** Move to Private, in a folder's menu, takes the folder and
+everything inside it out of Files, Photos, albums, Search, Home, Starred,
+Space and Android's file picker and share targets, on every phone. It is
+written into the folder's message (`private`), and each phone works out
+what is inside a private folder from its tree, as it does for the trash,
+so the index and Android's picker leave it out in SQL. Settings › Private
+lists the private folders behind the phone's fingerprint, face or screen
+lock, asked for on the way in whether or not app lock is on; inside, the
+folders work as in Files. Private closes when its last screen is left, or
+when the app goes to the background, which also closes anything opened
+from it. A private folder opened from outside by its id says it is in
+Private and opens there. Making a folder private needs a phone with a
+lock to open Private with. While Private is closed, Trash, Offline and
+Transfers leave out what is in it, with their counts and totals, so
+emptying the trash never takes what it didn't show; Trash opened from
+Private's own button lists everything. Waiting changes says how many of
+its changes are to things in Private without naming them, and the
+notification for a finished batch counts a file in Private rather than
+naming it or opening it. Until the phone has read which folders are
+private, anything in a folder counts as maybe in Private.
+
+**Search.** Words and dates narrow each other ("invoice march 2024",
+"last week"). PDFs and text files are read on the phone so search finds
+them by what they say; pages that are pictures are read with the phone's
+own text recognition (from Play services). A document fetched only
+to be read is deleted once it has been.
+
+**Playback.** Video, music, call recordings and audiobooks stream as they
+play, with seeking, even across a split file's parts; on mobile data only
+a short stretch ahead is fetched. Speeds from 0.75× to 2×, hold for 2×,
+skip steps that fit the length, resume where you stopped (on this phone),
+and audio from a folder plays on to the next file. PDFs open page by page
+without downloading the whole file.
+
+**Space.** Space lists the biggest files, each top-level folder with
+everything below it, and what the phone keeps: opened files, thumbnails,
+offline copies, the index and Telegram's own records. Opened files are
+trimmed daily to a tenth of the phone's storage or a third of what is
+free, whichever is less, between 100 MB and 1 GB.
+
+**Offline.** Files and folders can be kept on the phone; keeping a folder
+says first how many files it holds and how big they are. New files in a
+kept folder follow on their own.
+
+**Telegram.** Files, folders and albums can be sent to any chat as copies
+from the channel, with no upload. Files in any chat, Saved Messages or a
+channel you only read can be saved into the drive the same way. A proxy
+(MTProto or SOCKS5, pasted, typed or opened from a link) is offered where
+Telegram isn't reachable.
+
+**Android.** Share to Cloudora from any app, with recent folders as
+direct share targets; scan a document or take a photo straight into a
+folder; attach drive files in other apps through Android's file picker (a
+read-only DocumentsProvider); app lock with the phone's fingerprint, face
+or screen lock.
+
+**Check my drive** says whether the channel is private and yours with no
+auto-delete timer, when it was last read in full, which split files are
+missing a part, whether every photo backed up from this phone is still
+there, what in the trash goes soon, which photos and videos have no
+preview, whether two-step verification is on and when an unused account
+is deleted, with a fix beside each that has one. Make previews, on
+Android, fetches each photo or video without one, smallest first, makes
+a preview from it and sends its bytes again into the same message, since
+Telegram takes a document's preview only with the document. On mobile
+data it says how much data that takes and goes ahead only if asked to.
+A file that makes no picture isn't tried again in that run. The
+previews are in the channel, so every phone shows them.
+
+## Known limits
+
+- Private hides folders in Cloudora only. Telegram shows their files in
+  the channel as it shows any other.
+- Split files appear in Telegram as numbered parts, and only Cloudora
+  joins them back.
+- A video the phone's player can't decode, such as some MKV files, keeps
+  its poster and offers Open with another app.
+- A group in slow mode takes one message at a time, so sending files there
+  delivers the first only, and says so.
+- When Telegram asks for a pause longer than five minutes, Cloudora lets
+  the phone sleep, so a transfer may wait until the app is next opened.
+- A first backup or import that runs more than six hours with Cloudora
+  off screen waits for it to be opened (Android 15 and later). Android
+  14's user-initiated data transfer jobs have no daily limit, but one can
+  only be started while the app is on screen, so backup passes and folder
+  checks that begin in the background would still need the service; they
+  also need a job service on the native side, take an estimate of the
+  bytes from which Android decides how long the job may run, and don't
+  exist before Android 14. One open a day carries on, so Cloudora keeps
+  the one service.
+- Files you open, stream or download count toward the monthly data limit
+  but are never held back by it.
+- While the app is closed, the job that notices new photos doesn't know
+  about the monthly limit.
+- Saving a file to the phone needs room for it twice over for a moment.
+- Signing out forgets saved proxies with the rest of Telegram's data.
+- A watched folder sends each file once; a file changed after it went up
+  isn't sent again, and one renamed on the phone looks new.
+- Android's file picker shows the drive only while app lock is off, and a
+  file that isn't on the phone comes down only while Cloudora runs.
+- A change made without a connection stays on this phone until it reaches
+  Telegram; signing out loses it, and says how many would go. Creating
+  folders and albums, deleting an album and deleting for good need the
+  connection.
+- A small copy carries no location or camera details; the original that
+  replaces it does.
+- Where you stopped in a video is kept on this phone only.
+- A Google Photos import keeps the location in each photo's own file but
+  not the one in Takeout's JSON, and leaves out descriptions; the caption
+  format has no field for either. Edited photos come as copies beside
+  their originals, as Takeout gives them, and photos kept in Storage
+  saver quality come as Google stored them.
+- Takeout parts are read as zip files only, from this phone, so the
+  library passes through it twice: down from Google, then up to Telegram.
+
+## Project layout
+
+```text
+lib/
+├── app/               # app root, router (phase-driven), shell, theme
+├── core/              # config, formatting, file kinds, shared widgets
+├── infrastructure/
+│   ├── telegram/      # TDLib client, background receiver, which engine
+│   │                  # owns TDLib, secure storage, message numbers
+│   ├── database/      # Drift schema and queries (the index)
+│   ├── network/       # whether the phone is online, and metered
+│   └── storage/       # small preferences
+└── features/
+    ├── auth/          # welcome, phone, code, password, QR
+    ├── setup/         # splash; find or create the drive channel
+    ├── drive/         # the format (domain/), indexer, repository, sync,
+    │                  # the copy of the index, the outbox
+    ├── transfers/     # upload and download queue, background keep-alive
+    ├── backup/        # photo backup and watched folders
+    ├── takeout/       # importing a Google Photos export
+    ├── checkup/       # Check my drive
+    └── files/ home/ photos/ search/ settings/ viewer/ …
+```
+
+The format lives in `lib/features/drive/domain/`: `caption_text.dart` has
+the caption layout, folder tags and the details line, and `manifest.dart`
+has the records and the field names.
+
+Beside the app:
+
+```text
+docs/       # the website, served by GitHub Pages
+tool/       # TDLib builds, the IPA, screenshots, the icon, the guide's pictures
+```
+
+## Development
+
+The app signs in to Telegram with an `api_id` and `api_hash` from
+[my.telegram.org](https://my.telegram.org/apps) › API development tools.
+Every build needs the git-ignored `lib/core/config/telegram_api.dart`, so
+on a fresh clone copy the template:
+
+```bash
+cp lib/core/config/telegram_api.example.dart lib/core/config/telegram_api.dart
+```
+
+Then either fill in `apiId` and `apiHash` there, or leave the template's
+blanks and give the build the credentials.
+Credentials given to the build win over the file's:
+
+```bash
+flutter run --dart-define=TELEGRAM_API_ID=12345 --dart-define=TELEGRAM_API_HASH=0123abcd…
+flutter run --dart-define-from-file=telegram_api.json
+```
+
+`telegram_api.json` holds the same two,
+`{"TELEGRAM_API_ID": "12345", "TELEGRAM_API_HASH": "0123abcd…"}`, and git
+ignores it.
+
+TDLib comes from the app itself, built from source: the TDLib commit
+handy_tdlib's Dart API was generated from, with OpenSSL linked in. Before
+the first Android build, with the Android NDK (the `NDK_VERSION` in the
+script, which is the app's own), CMake and gperf installed, run:
+
+```bash
+tool/build_tdlib_android.sh
+```
+
+It builds `libtdjson.so` for arm64-v8a, armeabi-v7a, x86_64 and x86 into
+`android/app/src/main/jniLibs`, which git ignores, aligned for 16 KB memory
+pages and optimised for size; the first run takes about 20 minutes. The app
+packages these in place of handy_tdlib's own, which are aligned for 4 KB
+pages only, and leaves out handy_tdlib's `libcrypto.so` and `libssl.so`;
+the build stops if they are missing. `openTdLibrary()` opens
+`libtdjson.so` as before. Then run it on an Android device or emulator:
+
+```bash
+flutter pub get
+flutter run
+```
+
+On iOS, before the first build, with Xcode, CMake and gperf installed, run:
+
+```bash
+tool/build_tdlib_ios.sh
+```
+
+It builds the same TDLib commit for iPhones and for the simulator on Apple
+silicon, into `ios/Frameworks/tdjson.xcframework`, which git ignores.
+Runner links and embeds it, and `openTdLibrary()` loads it as
+`tdjson.framework/tdjson`. Then `flutter run` on an iPhone as usual; a
+release build (`flutter run --release`) keeps opening from the home screen
+once it is unplugged.
+
+For people installing it themselves, `tool/build_ipa.sh` builds an
+unsigned `build/ios/ipa/cloudora-<version>.ipa`. Sideloadly, SideStore and
+AltStore sign it with the installer's own Apple Account, so it needs no
+Apple team. The script builds the app afresh, since an unsigned build would
+otherwise keep the signature and provisioning profile of an earlier signed
+one, and a profile names its team and the devices it was made for.
+
+When handy_tdlib moves to a new TDLib, set `TD_COMMIT` in both scripts to
+match and run them again.
+
+Tests and generated code:
+
+```bash
+flutter test                         # unit, database and widget tests
+dart run build_runner build          # after changing the Drift schema
+flutter test tool/screenshots/screens_test.dart --update-goldens
+flutter test tool/icon/icon_test.dart --update-goldens && dart run flutter_launcher_icons
+```
+
+The screenshot harness renders the signed-in screens with sample data, so
+UI work doesn't need a Telegram account. Some screens show the time, so a
+re-run differs from the stored images by a digit or two. The sample photos
+are dated back from today, so as days pass the Photos screens move photos
+from one month to the next; regenerate the images before a release.
+
+The index's schema is version 2, and `test/drift_schemas/` keeps a copy of
+each released version, so a migration can be tested against what phones
+really have. A schema version bump dumps the new version there and
+regenerates the helpers `test/migration_test.dart` checks upgrades with;
+the two commands are at the top of that test. The database also takes over
+one left by a build from before the first release, whose schema went up to
+14: versions 10 to 14 keep what they hold, and older ones start empty for
+the channel to fill again.
+
+Run `flutter analyze` and `flutter test` before pushing, on a Mac so the
+backup tests that read photos run too; nothing runs them on GitHub.
+
+## Releases
+
+`version` in pubspec.yaml is the app's one version number: Android shows
+it, Settings › About shows it, and so does Telegram's Devices list,
+beside the app's name. The build number after the `+` is Android's
+version code, which has to go up with every release for phones to take
+the update.
+
+Release builds are signed with the upload key that the git-ignored
+`android/key.properties` names:
+
+```properties
+storeFile=/path/to/upload-keystore.jks
+storePassword=…
+keyAlias=upload
+keyPassword=…
+```
+
+`storeFile` is absolute or relative to `android/`. Without the file, a
+release build is signed with the debug key, so `flutter run --release`
+works on any checkout, but Android won't install that build over one
+signed with the upload key, or the other way round.
+
+Releases are built on a Mac, which the IPA needs, and attached to a
+GitHub release by hand. To release:
+
+1. Raise `version` in pubspec.yaml, build number included.
+2. Write what's new for people in `.github/release-notes/<version>.md`.
+3. Run `dart run tool/guide_figures.dart`, which draws the IPA's name into
+   the iPhone guide's pictures.
+4. Build every file into `build/release` with `tool/build_release.sh`.
+   It builds an APK for each ABI, the app bundle and the unsigned IPA,
+   stops if an Android file is signed with the debug key or the IPA lacks
+   TDLib, and writes `SHA256SUMS.txt`.
+5. In `docs/site.js`, set `FALLBACK_VERSION` and the APK and IPA sizes
+   from `build/release`, which the website shows when GitHub can't be
+   asked.
+6. Commit and push, then draft the release with its notes, attach the
+   files in `build/release`, and publish it, which makes the tag:
+
+```bash
+gh release create v1.0.0 --draft --target main --title "Cloudora 1.0.0" \
+  --notes-file .github/release-notes/1.0.0.md
+gh release upload v1.0.0 build/release/*
+```
+
+## Website
+
+The website, [protechph.github.io/Cloudora](https://protechph.github.io/Cloudora/),
+is the plain HTML, CSS and JavaScript in `docs/`, which GitHub Pages
+serves from main's `docs` folder. There is no build step: a push to main
+changes the site.
+
+| Page | What it is |
+| --- | --- |
+| `index.html` | What Cloudora is, the downloads, and questions |
+| `iphone.html` | Installing the IPA with Sideloadly, SideStore or AltStore, step by step |
+| `privacy.html` | What the app and the site keep, and where files go |
+| `404.html` | For any missing address; its paths start from `/Cloudora/` |
+
+- **Styles.** `styles.css` is the one stylesheet for every page, the same
+  web UI as gramX's site with Cloudora's colours, type and two themes;
+  `site.js` likewise follows gramX's (theme switch, release lookup, QR
+  codes, download sheet, guide tabs).
+- **Design.** The site follows DESIGN.md, Website included, and its
+  checks come from the Impeccable catalog. Its detector should find
+  nothing in a served page:
+
+  ```bash
+  python3 -m http.server 8787 --directory docs
+  npx impeccable detect http://localhost:8787/ http://localhost:8787/iphone.html
+  ```
+
+- **Downloads.** `site.js` asks GitHub for the latest release and points
+  every download at its files, matched by name. The page shows the right
+  download for the phone it is opened on, and a QR code on a computer.
+- **Screenshots** are the app's own, from the screenshot harness, as WebP
+  at half size; the Files card has a dark one for the Dark theme:
+
+  ```bash
+  cwebp -q 82 -resize 540 0 tool/screenshots/out/files_list_dark.png -o docs/assets/shots/files-list-dark.webp
+  ```
+
+- **The iPhone guide's pictures** are drawn, not captured, by
+  `dart run tool/guide_figures.dart` into `docs/assets/guide/`, with a
+  placeholder Apple Account. A picture that changes size needs the
+  `width` and `height` of its `<img>` changed too.
+- **Icons** in `docs/assets/icons.svg` are the Material Icons glyphs the
+  app draws, and the fonts are IBM Plex Sans cut down to Latin, as WOFF2.
+
+## Tips
+
+Settings › About › Support Cloudora opens Dawit's tip page on
+[Jami](https://jami.bio/daveragoose) (`AppConfig.support`), where people
+send a tip in birr. Jami takes the payment; nothing about it reaches the
+app, and every feature is there for everyone.
+
+## Platform support and roadmap
+
+| Platform | Status |
+| --- | --- |
+| Android (arm64, armv7, x86, x86_64) | Supported |
+| iOS (arm64, and the Apple silicon simulator) | Released as an unsigned IPA to sideload, with TDLib built by `tool/build_tdlib_ios.sh`. Photo backup runs while the app is open; the features below that need Android are off. |
+| macOS | Not yet. |
+
+- **Newer TDLib.** The app builds TDLib itself, aligned for 16 KB pages, but
+  stays on 1.8.36, the version `handy_tdlib`'s Dart API was generated from.
+  A newer TDLib needs that API generated again from its `td_api.tl`.
+- **iOS**: backup in the background, a share extension, and the features
+  that use Android's own channels: watched folders, the Google Photos
+  import, the drive in the system file picker, and the scanner and camera.
+- **macOS**, with a TDLib framework through the same FFI binding.
+- **End-to-end encryption** of file contents and details, with a recovery
+  passphrase.

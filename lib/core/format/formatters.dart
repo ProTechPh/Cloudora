@@ -1,0 +1,194 @@
+import 'package:intl/intl.dart';
+
+/// Human-readable sizes, dates and durations, in one place so every screen
+/// speaks the same units.
+abstract final class Formatters {
+  static const List<String> _units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+
+  /// `1536` → `1.5 KB`. Binary multiples, the way file managers show them.
+  static String bytes(int value, {int decimals = 1}) {
+    if (value <= 0) return '0 B';
+    var size = value.toDouble();
+    var unit = 0;
+    while (size >= 1024 && unit < _units.length - 1) {
+      size /= 1024;
+      unit++;
+    }
+    final digits = unit == 0 || size >= 100 ? 0 : decimals;
+    return '${size.toStringAsFixed(digits)} ${_units[unit]}';
+  }
+
+  /// Transfer speed, e.g. `2.4 MB/s`.
+  static String speed(double bytesPerSecond) =>
+      '${bytes(bytesPerSecond.round())}/s';
+
+  /// `75` → `1 min 15 s`; short enough for a progress row.
+  static String eta(Duration duration) {
+    final seconds = duration.inSeconds;
+    if (seconds < 60) return '${seconds}s left';
+    final minutes = duration.inMinutes;
+    if (minutes < 60) return '${minutes}m ${seconds % 60}s left';
+    return '${duration.inHours}h ${minutes % 60}m left';
+  }
+
+  /// `72 s` → `1:12`, `3723 s` → `1:02:03`: time left on a wait that counts
+  /// down. A part-second counts as a whole one, so the clock never reads
+  /// 0:00 while there is still time to go.
+  static String countdown(Duration duration) {
+    final total = duration.isNegative
+        ? 0
+        : (duration.inMicroseconds / Duration.microsecondsPerSecond).ceil();
+    String two(int value) => value.toString().padLeft(2, '0');
+    final hours = total ~/ 3600;
+    final minutes = total % 3600 ~/ 60;
+    final seconds = total % 60;
+    return hours > 0
+        ? '$hours:${two(minutes)}:${two(seconds)}'
+        : '$minutes:${two(seconds)}';
+  }
+
+  /// `42 s` → `0:42`, `760 s` → `12:40`, `4360 s` → `1:12:40`: how long a
+  /// video or audio file runs, or where playback is in it. Hours show only
+  /// from one hour, and the minutes are padded to two digits only then.
+  static String length(Duration duration) {
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes
+        .remainder(60)
+        .toString()
+        .padLeft(hours > 0 ? 2 : 1, '0');
+    final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
+  }
+
+  /// `40 s` → `Less than a minute left`, `37:48` → `38 min left`,
+  /// `72 min` → `1 h 12 min left`: how much of a video or recording is still
+  /// to play, to the nearest minute.
+  static String left(Duration duration) {
+    final seconds = duration.inSeconds;
+    if (seconds < 60) return 'Less than a minute left';
+    final minutes = (seconds / 60).round();
+    if (minutes < 60) return '$minutes min left';
+    final rest = minutes % 60;
+    final hours = '${minutes ~/ 60} h';
+    return rest == 0 ? '$hours left' : '$hours $rest min left';
+  }
+
+  /// `1` → `1×`, `1.25` → `1.25×`, `0.75` → `0.75×`: a playback speed, with
+  /// up to two decimals and no trailing zeros.
+  static String rate(double speed) {
+    var text = speed.toStringAsFixed(2);
+    if (text.contains('.')) {
+      text = text.replaceFirst(RegExp(r'\.?0+$'), '');
+    }
+    return '$text×';
+  }
+
+  /// `37 s` → `37 seconds`, `7200 s` → `2 hours`: a length of time rounded
+  /// the way a person would say it.
+  static String inWords(Duration duration) {
+    final seconds = duration.inSeconds;
+    if (seconds < 90) return count(seconds, 'second');
+    if (seconds < 5400) return count((seconds / 60).round(), 'minute');
+    return count((seconds / 3600).round(), 'hour');
+  }
+
+  /// `7 days` → `1 week`, `30 days` → `1 month`, `548 days` → `18 months`,
+  /// `730 days` → `2 years`: a span of days the way a timer names it, in
+  /// the largest unit that fits it. Under a day it reads like [inWords],
+  /// `2 hours` or `30 minutes`.
+  static String period(Duration duration) {
+    final days = duration.inDays;
+    if (days == 0) return inWords(duration);
+    if (days < 30) {
+      return days >= 7 && days % 7 == 0 ? count(days ~/ 7, 'week') : count(days, 'day');
+    }
+    final months = (days / 30.4375).round();
+    return months % 12 == 0 ? count(months ~/ 12, 'year') : count(months, 'month');
+  }
+
+  /// `0.2404 s` → `240 ms`: how long a network round trip took.
+  static String latency(Duration duration) =>
+      '${number(duration.inMilliseconds)} ms';
+
+  /// Today → time, this year → day and month, otherwise the full date.
+  static String date(DateTime value, {DateTime? now}) {
+    final reference = now ?? DateTime.now();
+    final sameDay =
+        value.year == reference.year &&
+        value.month == reference.month &&
+        value.day == reference.day;
+    if (sameDay) return DateFormat.jm().format(value);
+    if (value.year == reference.year) return DateFormat.MMMd().format(value);
+    return DateFormat.yMMMd().format(value);
+  }
+
+  /// When something happens later, to follow a verb: `at 4:30 PM` today,
+  /// `tomorrow at 8:00 AM`, then `on Oct 20 at 8:00 AM`, with the year once
+  /// it isn't this one's.
+  static String at(DateTime value, {DateTime? now}) {
+    final reference = now ?? DateTime.now();
+    final time = DateFormat.jm().format(value);
+    final day = DateTime(value.year, value.month, value.day);
+    final today = DateTime(reference.year, reference.month, reference.day);
+    final days = day.difference(today).inHours / 24;
+    if (days.round() == 0) return 'at $time';
+    if (days.round() == 1) return 'tomorrow at $time';
+    final date = value.year == reference.year
+        ? DateFormat.MMMd().format(value)
+        : DateFormat.yMMMd().format(value);
+    return 'on $date at $time';
+  }
+
+  static String fullDate(DateTime value) =>
+      DateFormat.yMMMd().add_jm().format(value);
+
+  /// When something will happen: the time today, `tomorrow` and the time
+  /// tomorrow, and the date after that.
+  static String clock(DateTime at, {DateTime? now}) {
+    final reference = now ?? DateTime.now();
+    bool on(DateTime day) =>
+        at.year == day.year && at.month == day.month && at.day == day.day;
+    if (on(reference)) return DateFormat.jm().format(at);
+    if (on(DateTime(reference.year, reference.month, reference.day + 1))) {
+      return 'tomorrow ${DateFormat.jm().format(at)}';
+    }
+    return date(at, now: reference);
+  }
+
+  /// When something in the trash leaves for good at [gone]: `goes for good
+  /// in 27 days`, or `goes for good today` once less than a day is left.
+  static String daysLeft(DateTime gone, {DateTime? now}) {
+    final days = gone.difference(now ?? DateTime.now()).inDays;
+    return days <= 0
+        ? 'goes for good today'
+        : 'goes for good in ${count(days, 'day')}';
+  }
+
+  /// [text] with its first letter in upper case, for a fragment that opens
+  /// a line.
+  static String capitalised(String text) =>
+      text.isEmpty ? text : text[0].toUpperCase() + text.substring(1);
+
+  /// `3` → `3rd`, `11` → `11th`, `22` → `22nd`: a day of the month the way
+  /// it is said, as in 'renews on the 3rd'.
+  static String dayOfMonth(int day) {
+    final suffix = day % 100 >= 11 && day % 100 <= 13
+        ? 'th'
+        : switch (day % 10) {
+            1 => 'st',
+            2 => 'nd',
+            3 => 'rd',
+            _ => 'th',
+          };
+    return '$day$suffix';
+  }
+
+  /// `12345` → `12,345`.
+  static String number(int value) =>
+      NumberFormat.decimalPattern().format(value);
+
+  static String count(int value, String singular, [String? plural]) {
+    final word = value == 1 ? singular : (plural ?? '${singular}s');
+    return '${NumberFormat.decimalPattern().format(value)} $word';
+  }
+}

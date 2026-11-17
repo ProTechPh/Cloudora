@@ -1,0 +1,369 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+
+import '../../../app/theme/tokens.dart';
+import '../../../core/format/formatters.dart';
+import '../../../core/widgets/common.dart';
+import '../../../core/widgets/selection_bar.dart';
+import '../../backup/data/backup_controller.dart';
+import '../../backup/presentation/backup_card.dart';
+import '../../backup/presentation/duplicates_sheet.dart';
+import '../../drive/data/drive_sync.dart';
+import '../../files/presentation/file_actions.dart';
+import '../../lock/data/app_lock.dart';
+import '../data/photos_visibility.dart';
+import 'media_grid.dart';
+import 'media_selection_bar.dart';
+
+enum _PhotosMenu { select, fromChat, download, duplicates }
+
+/// Every photo and video in the drive as one timeline, newest moment first,
+/// with backup status on top. Chips above the grid narrow it to photos or
+/// to videos, and it can run oldest first.
+class PhotosScreen extends ConsumerStatefulWidget {
+  const PhotosScreen({super.key});
+
+  @override
+  ConsumerState<PhotosScreen> createState() => _PhotosScreenState();
+}
+
+class _PhotosScreenState extends ConsumerState<PhotosScreen> {
+  final _selection = MediaSelection();
+
+  /// Tells the shell whether this tab is selecting, so its bar makes way for
+  /// the selection's. Kept from the start, for when the screen goes.
+  late final SelectionActive _selectionActive;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectionActive = ref.read(selectionActiveProvider.notifier);
+    // The shell gives up its bar while this tab is selecting, told in the
+    // same turn as the selection changes so the two bars never show together.
+    _selection.addListener(() => _selectionActive.set(_selection.active));
+  }
+
+  @override
+  void dispose() {
+    // A shell taken down while selecting, as when the account signs out,
+    // leaves the flag set for the next shell. Nothing may change while
+    // screens are being taken down, so that waits for the end of the frame.
+    if (_selection.active) {
+      final active = _selectionActive;
+      WidgetsBinding.instance.addPostFrameCallback((_) => active.set(false));
+    }
+    _selection.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final media = ref.watch(photosTabProvider);
+    final view = ref.watch(photosViewProvider);
+    final anything = ref.watch(photosTimelineProvider).value?.isNotEmpty ?? false;
+    // Hide, a filter, or a file going away, can take selected photos off
+    // screen.
+    ref.listen(photosTabProvider, (_, next) {
+      if (next.value case final files?) _selection.keepOnly(files);
+    });
+    // A selection stays on its tab: the shell, switching tabs, says nothing
+    // is selecting, and the selection goes.
+    ref.listen<bool>(selectionActiveProvider, (_, active) {
+      if (!active) _selection.clear();
+    });
+    final backup = ref.watch(backupControllerProvider);
+    final keptOut = ref.watch(keptOutSummaryProvider);
+    final files = media.value;
+
+    return ListenableBuilder(
+      listenable: _selection,
+      builder: (context, _) => PopScope(
+        canPop: !_selection.active,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) _selection.clear();
+        },
+        child: Scaffold(
+          appBar: _selection.active
+              ? mediaSelectionAppBar(context, selection: _selection, files: files ?? const [])
+              : AppBar(
+                  toolbarHeight: 64,
+                  title: Text('Photos', style: context.text.headlineSmall),
+                  actions: [
+                    IconButton(
+                      onPressed: () => context.push('/search?kind=media'),
+                      tooltip: 'Search photos and videos',
+                      icon: const Icon(Icons.search_rounded),
+                    ),
+                    IconButton(
+                      onPressed: () => context.push('/albums'),
+                      tooltip: 'Albums',
+                      icon: const Icon(Icons.photo_library_outlined),
+                    ),
+                    IconButton(
+                      onPressed: () => context.push('/backup'),
+                      tooltip: 'Backup settings',
+                      icon: Icon(switch (backup.phase) {
+                        BackupPhase.off => Icons.cloud_off_outlined,
+                        BackupPhase.upToDate => Icons.cloud_done_outlined,
+                        BackupPhase.needsPermission => Icons.cloud_off_outlined,
+                        BackupPhase.stopped => Icons.cloud_off_outlined,
+                        BackupPhase.paused => Icons.pause_circle_outline_rounded,
+                        _ => Icons.cloud_sync_outlined,
+                      }),
+                    ),
+                    PopupMenuButton<_PhotosMenu>(
+                      tooltip: 'More',
+                      onSelected: (choice) => switch (choice) {
+                        _PhotosMenu.select => _selection.begin(),
+                        _PhotosMenu.fromChat => FileActions.saveFromChat(
+                          context,
+                          ref,
+                          photos: true,
+                        ),
+                        _PhotosMenu.download => FileActions.saveToDevice(
+                          context,
+                          ref,
+                          files: files ?? const [],
+                          preferGallery: true,
+                        ),
+                        _PhotosMenu.duplicates => removeDuplicateBackups(context, ref),
+                      },
+                      itemBuilder: (_) => [
+                        const PopupMenuItem(
+                          value: _PhotosMenu.select,
+                          child: Text('Select photos'),
+                        ),
+                        const PopupMenuItem(
+                          value: _PhotosMenu.fromChat,
+                          child: Text('Save photos from a Telegram chat'),
+                        ),
+                        const PopupMenuItem(
+                          value: _PhotosMenu.duplicates,
+                          child: Text('Remove duplicate backups'),
+                        ),
+                        if (files != null && files.isNotEmpty)
+                          PopupMenuItem(
+                            value: _PhotosMenu.download,
+                            child: Text(switch (view.show) {
+                              PhotosShow.all => 'Download all to this phone',
+                              PhotosShow.photos => 'Download all photos to this phone',
+                              PhotosShow.videos => 'Download all videos to this phone',
+                            }),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+          bottomNavigationBar: _selection.active
+              ? mediaSelectionActions(context, ref, selection: _selection, files: files ?? const [])
+              : null,
+          body: files == null
+              ? const Center(child: CircularProgressIndicator())
+              : MediaGrid(
+                  files: files,
+                  selection: _selection,
+                  onOpen: (file) => context.push('/viewer/${file.id}?from=photos'),
+                  onRefresh: () async {
+                    await ref.read(driveSyncProvider.notifier).refresh();
+                    ref.read(backupControllerProvider.notifier).schedule(immediate: true);
+                  },
+                  header: [
+                    SliverToBoxAdapter(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          border: Border(bottom: BorderSide(color: context.colors.line)),
+                        ),
+                        child: const BackupStatusLine(),
+                      ),
+                    ),
+                    const SliverToBoxAdapter(child: _StuckRow()),
+                    const SliverToBoxAdapter(child: _KeptOutRow()),
+                    if (anything) const SliverToBoxAdapter(child: _ShowRow()),
+                  ],
+                  empty: anything && view.show != PhotosShow.all
+                      ? EmptyState(
+                          title: view.show == PhotosShow.videos ? 'No videos' : 'No photos',
+                          message: 'Tap All to see everything.',
+                          compact: true,
+                        )
+                      : keptOut.count > 0
+                      ? const EmptyState(
+                          title: 'No photos to show',
+                          message: 'Everything here is in folders kept out of this view. '
+                              'Tap Show above to see them.',
+                          compact: true,
+                        )
+                      : EmptyState(
+                          title: 'No photos yet',
+                          message: backup.enabled
+                              ? 'Photos show up here as they back up.'
+                              : 'Turn on backup, or upload photos and videos.',
+                          compact: true,
+                        ),
+                ),
+        ),
+      ),
+    );
+  }
+}
+
+/// All, Photos or Videos, and the order the timeline runs in.
+class _ShowRow extends ConsumerWidget {
+  const _ShowRow();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.colors;
+    final view = ref.watch(photosViewProvider);
+    final choice = ref.read(photosViewProvider.notifier);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(Space.gutter, Space.s, Space.s, Space.s),
+      child: Row(
+        children: [
+          for (final show in PhotosShow.values) ...[
+            ChoiceChip(
+              label: Text(show.label),
+              selected: view.show == show,
+              showCheckmark: false,
+              onSelected: (_) => choice.show(show),
+            ),
+            const SizedBox(width: Space.s),
+          ],
+          const Spacer(),
+          PopupMenuButton<bool>(
+            tooltip: 'Order',
+            initialValue: view.oldestFirst,
+            onSelected: choice.setOldestFirst,
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: false, child: Text('Newest first')),
+              PopupMenuItem(value: true, child: Text('Oldest first')),
+            ],
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: Space.s, vertical: Space.xs),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    view.oldestFirst ? 'Oldest first' : 'Newest first',
+                    style: context.text.labelLarge?.copyWith(color: colors.text2),
+                  ),
+                  Icon(Icons.arrow_drop_down_rounded, color: colors.text3),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Points to what is stuck: Not backed up while photos are out of tries,
+/// and otherwise the Backup queue while photos wait and backup isn't
+/// moving. While backup is moving, the status line above already counts
+/// what is left, so the row names only the failures.
+class _StuckRow extends ConsumerWidget {
+  const _StuckRow();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.colors;
+    final backup = ref.watch(backupControllerProvider);
+    final waiting = backup.remaining > 0 && !backup.isWorking;
+    if (backup.failed == 0 && !waiting) return const SizedBox.shrink();
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: colors.line)),
+      ),
+      child: InkWell(
+        onTap: () => context.push(backup.failed > 0 ? '/backup/not-backed-up' : '/backup/queue'),
+        child: SizedBox(
+          height: 40,
+          child: Padding(
+            padding: const EdgeInsets.only(left: Space.gutter, right: Space.m),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    [
+                      if (waiting) '${Formatters.number(backup.remaining)} waiting',
+                      if (backup.failed > 0)
+                        '${Formatters.number(backup.failed)} didn\'t back up',
+                    ].join(' · '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: context.text.bodySmall?.copyWith(fontFeatures: tabularFigures),
+                  ),
+                ),
+                Icon(Icons.chevron_right_rounded, color: colors.text3),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Says which folders the timeline leaves out, with Show to bring them in
+/// until the app closes. Only there while one of them has something in it.
+/// With app lock on, Show asks for the phone's lock first.
+class _KeptOutRow extends ConsumerWidget {
+  const _KeptOutRow();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.colors;
+    final keptOut = ref.watch(keptOutSummaryProvider);
+    final revealed = ref.watch(revealHiddenProvider);
+    if (keptOut.count == 0) return const SizedBox.shrink();
+    Future<void> toggle() async {
+      if (!revealed && ref.read(appLockProvider).enabled) {
+        final passed = await ref
+            .read(appLockProvider.notifier)
+            .confirm('Show the hidden photos');
+        if (!passed) return;
+      }
+      ref.read(revealHiddenProvider.notifier).toggle();
+    }
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: colors.line)),
+      ),
+      child: InkWell(
+        onTap: toggle,
+        child: SizedBox(
+          height: 44,
+          child: Padding(
+            padding: const EdgeInsets.only(left: Space.gutter, right: Space.s),
+            child: Row(
+              children: [
+                Icon(
+                  revealed ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+                  size: 20,
+                  color: colors.text3,
+                ),
+                const SizedBox(width: Space.m),
+                Expanded(
+                  child: Text(
+                    keptOutSentence(keptOut.names, revealed: revealed),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: context.text.bodySmall,
+                  ),
+                ),
+                TextButton(
+                  onPressed: toggle,
+                  child: Text(revealed ? 'Hide' : 'Show'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

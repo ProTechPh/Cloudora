@@ -1,0 +1,587 @@
+import 'dart:ui' as ui;
+
+import 'package:drift/native.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:cloudora/app/theme/app_theme.dart';
+import 'package:cloudora/core/files/file_kind.dart';
+import 'package:cloudora/features/drive/data/drive_repository.dart';
+import 'package:cloudora/features/drive/data/previews.dart';
+import 'package:cloudora/features/drive/domain/drive_models.dart';
+import 'package:cloudora/features/photos/data/photos_visibility.dart';
+import 'package:cloudora/features/viewer/presentation/image_viewer_screen.dart';
+import 'package:cloudora/features/viewer/presentation/vertical_swipe.dart';
+import 'package:cloudora/infrastructure/database/app_database.dart';
+import 'package:cloudora/infrastructure/storage/preferences.dart';
+import 'package:video_player/video_player.dart';
+
+DriveFile _photo(String id, int day) => DriveFile(
+  id: id,
+  folderId: 'camera',
+  name: '$id.jpg',
+  mimeType: 'image/jpeg',
+  kind: FileKind.image,
+  size: 1200000,
+  createdAt: DateTime(2026, 9, day, 10, 12),
+  modifiedAt: DateTime(2026, 9, day, 10, 12),
+  partCount: 1,
+  starred: false,
+  takenAt: DateTime(2026, 9, day, 8),
+);
+
+final _photos = [_photo('a', 26), _photo('b', 25), _photo('c', 24)];
+
+/// A clip of 1:24 the viewer can be opened on by itself.
+final _video = DriveFile(
+  id: 'v',
+  folderId: 'camera',
+  name: 'v.mp4',
+  mimeType: 'video/mp4',
+  kind: FileKind.video,
+  size: 1200000,
+  createdAt: DateTime(2026, 9, 23, 10, 12),
+  modifiedAt: DateTime(2026, 9, 23, 10, 12),
+  partCount: 1,
+  starred: false,
+  takenAt: DateTime(2026, 9, 23, 8),
+  durationSeconds: 84,
+);
+
+/// A document in the Camera folder, which a swipe passes over.
+final _notes = DriveFile(
+  id: 'notes',
+  folderId: 'camera',
+  name: 'notes.pdf',
+  mimeType: 'application/pdf',
+  kind: FileKind.document,
+  size: 4000,
+  createdAt: DateTime(2026, 9, 22),
+  modifiedAt: DateTime(2026, 9, 22),
+  partCount: 1,
+  starred: false,
+);
+
+/// Which of the photos are in the trash.
+class _Trashed extends Notifier<Set<String>> {
+  @override
+  Set<String> build() => const {};
+
+  void update(Set<String> ids) => state = ids;
+}
+
+final _trashedProvider = NotifierProvider<_Trashed, Set<String>>(_Trashed.new);
+
+/// A drive whose Photo backup › Camera folder holds the three photos, and
+/// whose trash and restore only flip which of them the timeline shows.
+class _Repository extends DriveRepository {
+  _Repository(this.ref) : super(ref);
+
+  final Ref ref;
+
+  @override
+  Future<void> trash({
+    List<DriveFile> files = const [],
+    List<DriveFolder> folders = const [],
+  }) async {
+    final trashed = ref.read(_trashedProvider);
+    ref.read(_trashedProvider.notifier).update({
+      ...trashed,
+      ...files.map((f) => f.id),
+    });
+  }
+
+  @override
+  Future<void> restore({
+    List<DriveFile> files = const [],
+    List<DriveFolder> folders = const [],
+  }) async {
+    final back = files.map((f) => f.id).toSet();
+    ref
+        .read(_trashedProvider.notifier)
+        .update(ref.read(_trashedProvider).difference(back));
+  }
+
+  @override
+  Future<DriveFile?> fileById(String id) async =>
+      [..._photos, _video].where((f) => f.id == id).firstOrNull;
+
+  @override
+  Future<List<DriveFolder>> pathTo(String? folderId) async => [
+    for (final (id, name, parent) in [
+      ('backup', 'Photo backup', null),
+      ('camera', 'Camera', 'backup'),
+    ])
+      DriveFolder(
+        id: id,
+        parentId: parent,
+        name: name,
+        createdAt: DateTime(2026),
+        modifiedAt: DateTime(2026),
+      ),
+  ];
+}
+
+void main() {
+  late AppDatabase db;
+  late GoRouter router;
+
+  Future<void> settle(WidgetTester tester) async {
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+  }
+
+  Future<void> open(WidgetTester tester, String location) async {
+    // ignore: invalid_use_of_visible_for_testing_member
+    SharedPreferences.setMockInitialValues({});
+    final shared = await SharedPreferences.getInstance();
+    db = AppDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    router = GoRouter(
+      initialLocation: '/photos',
+      routes: [
+        GoRoute(
+          path: '/photos',
+          builder: (_, _) =>
+              const Scaffold(body: Center(child: Text('Photos'))),
+        ),
+        GoRoute(
+          path: '/viewer/:fileId',
+          builder: (_, state) => ImageViewerScreen(
+            fileId: state.pathParameters['fileId']!,
+            source: state.uri.queryParameters['from'],
+          ),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sharedPreferencesProvider.overrideWithValue(shared),
+          appDatabaseProvider.overrideWithValue(db),
+          driveRepositoryProvider.overrideWith(_Repository.new),
+          photosTimelineProvider.overrideWith((ref) {
+            final trashed = ref.watch(_trashedProvider);
+            return AsyncData([
+              for (final photo in _photos)
+                if (!trashed.contains(photo.id)) photo,
+            ]);
+          }),
+          for (final photo in _photos) ...[
+            fileInfoProvider(photo.id)
+                .overrideWith((ref) => Stream.value(photo)),
+            // Still coming down from Telegram, which the gestures work over.
+            filePreviewProvider(photo.id).overrideWith(
+              (ref) => Stream.value(
+                const PreviewProgress(received: 0, total: 1200000),
+              ),
+            ),
+          ],
+          fileInfoProvider(_video.id)
+              .overrideWith((ref) => Stream.value(_video)),
+          // Camera, as Files lists it, with a document among the photos.
+          folderContentsProvider('camera').overrideWith(
+            (ref) => Stream.value(
+              FolderContents(
+                folders: const [],
+                files: [_photos[2], _notes, _photos[0], _video, _photos[1]],
+              ),
+            ),
+          ),
+          kindFilesProvider(FileKind.image)
+              .overrideWith((ref) => Stream.value(_photos)),
+        ],
+        child: MaterialApp.router(
+          theme: AppTheme.light(),
+          routerConfig: router,
+        ),
+      ),
+    );
+    await settle(tester);
+    router.push(location);
+    await settle(tester);
+  }
+
+  Finder bar(String text) =>
+      find.descendant(of: find.byType(AppBar), matching: find.text(text));
+
+  Finder subtitle(String ending) => find.descendant(
+    of: find.byType(AppBar),
+    matching: find.textContaining(RegExp('· $ending\$')),
+  );
+
+  /// The page on screen, which the vertical gestures act on.
+  Finder page() => find.byType(VerticalSwipe).hitTestable().first;
+
+  testWidgets(
+    'opened from the timeline the bar counts; opened on one file it does not',
+    (tester) async {
+      await open(tester, '/viewer/b?from=photos');
+      expect(bar('b.jpg'), findsOneWidget);
+      expect(subtitle('2 of 3'), findsOneWidget);
+
+      router.pop();
+      await settle(tester);
+      router.push('/viewer/b');
+      await settle(tester);
+      expect(bar('b.jpg'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(AppBar),
+          matching: find.textContaining(' of '),
+        ),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
+    'opened from a folder it swipes through the folder\'s photos and videos, '
+    'in the order Files lists them',
+    (tester) async {
+      await open(tester, '/viewer/b?from=folder:camera');
+      expect(bar('b.jpg'), findsOneWidget);
+      expect(subtitle('2 of 4'), findsOneWidget);
+
+      await tester.drag(page(), const Offset(-500, 0));
+      await settle(tester);
+      expect(bar('c.jpg'), findsOneWidget);
+      expect(subtitle('3 of 4'), findsOneWidget);
+
+      // The document between them is passed over. The pages take
+      // touches again once they have come to rest.
+      await tester.pump(const Duration(seconds: 1));
+      await tester.drag(page(), const Offset(-500, 0));
+      await settle(tester);
+      expect(bar('v.mp4'), findsOneWidget);
+      expect(subtitle('4 of 4'), findsOneWidget);
+    },
+  );
+
+  testWidgets('opened from the Images list it swipes through that list', (
+    tester,
+  ) async {
+    await open(tester, '/viewer/a?from=kind:image');
+    expect(subtitle('1 of 3'), findsOneWidget);
+    await tester.drag(page(), const Offset(-500, 0));
+    await settle(tester);
+    expect(bar('b.jpg'), findsOneWidget);
+    expect(subtitle('2 of 3'), findsOneWidget);
+  });
+
+  testWidgets('the size shows only where no count takes its room', (
+    tester,
+  ) async {
+    final size = find.descendant(
+      of: find.byType(AppBar),
+      matching: find.textContaining('MB'),
+    );
+    await open(tester, '/viewer/b?from=photos');
+    expect(size, findsNothing);
+
+    router.pop();
+    await settle(tester);
+    router.push('/viewer/b');
+    await settle(tester);
+    expect(size, findsOneWidget);
+  });
+
+  testWidgets('the back arrow and every action are white on the dark bar', (
+    tester,
+  ) async {
+    await open(tester, '/viewer/b?from=photos');
+    final icons = [
+      find.byType(BackButtonIcon),
+      for (final tip in ['Star', 'Share', 'Move to Trash', 'More'])
+        find.descendant(of: find.byTooltip(tip), matching: find.byType(Icon)),
+    ];
+    for (final icon in icons) {
+      expect(IconTheme.of(tester.element(icon)).color, Colors.white);
+    }
+  });
+
+  testWidgets(
+    'the bar holds Star, Share, Move to Trash and More, in that order',
+    (tester) async {
+      await open(tester, '/viewer/b?from=photos');
+      final xs = [
+        for (final tip in ['Star', 'Share', 'Move to Trash', 'More'])
+          tester.getCenter(find.byTooltip(tip)).dx,
+      ];
+      expect(xs, orderedEquals([...xs]..sort()));
+      expect(
+        find.descendant(
+          of: find.byType(AppBar),
+          matching: find.byType(IconButton),
+        ),
+        findsNWidgets(5),
+      );
+    },
+  );
+
+  testWidgets(
+    'trash shows the next photo, and Undo puts it back in its place',
+    (tester) async {
+      await open(tester, '/viewer/b?from=photos');
+      await tester.tap(find.byTooltip('Move to Trash'));
+      await settle(tester);
+      expect(find.text('Moved "b.jpg" to Trash'), findsOneWidget);
+      expect(bar('c.jpg'), findsOneWidget);
+      expect(subtitle('2 of 2'), findsOneWidget);
+
+      await tester.tap(find.text('Undo'));
+      await settle(tester);
+      expect(bar('c.jpg'), findsOneWidget);
+      expect(subtitle('3 of 3'), findsOneWidget);
+
+      await tester.drag(page(), const Offset(500, 0));
+      await settle(tester);
+      expect(bar('b.jpg'), findsOneWidget);
+      expect(subtitle('2 of 3'), findsOneWidget);
+    },
+  );
+
+  testWidgets('trashing the last photo closes the viewer and the snack stays', (
+    tester,
+  ) async {
+    await open(tester, '/viewer/b');
+    await tester.tap(find.byTooltip('Move to Trash'));
+    await settle(tester);
+    expect(find.byType(ImageViewerScreen), findsNothing);
+    expect(find.text('Photos'), findsOneWidget);
+    expect(find.text('Moved "b.jpg" to Trash'), findsOneWidget);
+  });
+
+  testWidgets(
+    'a flick down closes the viewer, and the bar hides while dragging',
+    (tester) async {
+      await open(tester, '/viewer/b?from=photos');
+      final gesture = await tester.startGesture(tester.getCenter(page()));
+      await gesture.moveBy(const Offset(0, 30));
+      await gesture.moveBy(const Offset(0, 60));
+      await settle(tester);
+      expect(
+        tester
+            .widget<IgnorePointer>(
+              find
+                  .ancestor(
+                    of: find.byType(AppBar),
+                    matching: find.byType(IgnorePointer),
+                  )
+                  .first,
+            )
+            .ignoring,
+        isTrue,
+      );
+      await gesture.moveBy(const Offset(0, 100));
+      await gesture.up();
+      await settle(tester);
+      expect(find.byType(ImageViewerScreen), findsNothing);
+      expect(find.text('Photos'), findsOneWidget);
+    },
+  );
+
+  testWidgets('a short drag down leaves the viewer open with its bar back', (
+    tester,
+  ) async {
+    await open(tester, '/viewer/b?from=photos');
+    await tester.drag(page(), const Offset(0, 80));
+    await settle(tester);
+    expect(find.byType(ImageViewerScreen), findsOneWidget);
+    expect(
+      tester
+          .widget<IgnorePointer>(
+            find
+                .ancestor(
+                  of: find.byType(AppBar),
+                  matching: find.byType(IgnorePointer),
+                )
+                .first,
+          )
+          .ignoring,
+      isFalse,
+    );
+  });
+
+  testWidgets(
+    'a flick up opens Details with what the drive knows about the photo',
+    (tester) async {
+      await open(tester, '/viewer/b?from=photos');
+      for (final (id, name, messageId) in [
+        ('t', 'Trip', 50),
+        ('f', 'Family', 51),
+      ]) {
+        await db.upsertAlbum(
+          AlbumsCompanion.insert(
+            id: id,
+            name: name,
+            messageId: messageId,
+            createdAt: DateTime(2026),
+            modifiedAt: DateTime(2026),
+          ),
+        );
+      }
+      await db.setFileAlbums('b', ['t', 'f']);
+      await db.markAssetBackedUp('asset-b', 'b');
+
+      await tester.drag(page(), const Offset(0, -100));
+      await settle(tester);
+      expect(find.text('Taken'), findsOneWidget);
+      expect(find.text('Files › Photo backup › Camera'), findsOneWidget);
+      expect(find.text('Family, Trip'), findsOneWidget);
+      expect(find.text('This phone · Camera'), findsOneWidget);
+      expect(
+        find.widgetWithText(OutlinedButton, 'Show in Telegram'),
+        findsOneWidget,
+      );
+      expect(find.byType(ImageViewerScreen), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'a video waits on its poster with Play, its length and its size',
+    (tester) async {
+      await open(tester, '/viewer/v');
+      expect(bar('v.mp4'), findsOneWidget);
+      expect(find.text('Play · 1:24 · 1.1 MB'), findsOneWidget);
+      expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+      // Nothing plays, and nothing is fetched, until Play is tapped.
+      expect(find.byType(VideoPlayer), findsNothing);
+      expect(find.byTooltip('Full screen'), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+
+      // A tap elsewhere only hides the bar, as on a photo.
+      await tester.tapAt(tester.getTopLeft(page()) + const Offset(20, 300));
+      await settle(tester);
+      expect(
+        tester
+            .widget<IgnorePointer>(
+              find
+                  .ancestor(
+                    of: find.byType(AppBar),
+                    matching: find.byType(IgnorePointer),
+                  )
+                  .first,
+            )
+            .ignoring,
+        isTrue,
+      );
+      expect(find.byType(VideoPlayer), findsNothing);
+    },
+  );
+
+  testWidgets('a flick up on a video opens Details with its Duration', (
+    tester,
+  ) async {
+    await open(tester, '/viewer/v');
+    await tester.drag(page(), const Offset(0, -100));
+    await settle(tester);
+    expect(find.text('Duration'), findsOneWidget);
+    expect(find.text('1:24'), findsOneWidget);
+  });
+
+  testWidgets('zoomed in, a vertical drag pans and nothing closes', (
+    tester,
+  ) async {
+    await open(tester, '/viewer/b?from=photos');
+    Future<void> doubleTap() async {
+      await tester.tap(page());
+      await tester.pump(const Duration(milliseconds: 60));
+      await tester.tap(page());
+      await settle(tester);
+    }
+
+    await doubleTap();
+    await tester.drag(page(), const Offset(0, 200));
+    await settle(tester);
+    expect(find.byType(ImageViewerScreen), findsOneWidget);
+
+    await doubleTap();
+    await tester.drag(page(), const Offset(0, 200));
+    await settle(tester);
+    expect(find.byType(ImageViewerScreen), findsNothing);
+  });
+
+  group('a pinch zooms the photo', () {
+    double scale(WidgetTester tester) => tester
+        .widget<InteractiveViewer>(find.byType(InteractiveViewer).first)
+        .transformationController!
+        .value
+        .getMaxScaleOnAxis();
+
+    /// Two fingers [apart] on the photo along [direction], spread further
+    /// apart by [step] a frame, or closer when it is negative. With
+    /// [oneFinger] the first stays still and the second moves twice as far.
+    Future<void> pinch(
+      WidgetTester tester,
+      Offset direction, {
+      double apart = 40,
+      double step = 6,
+      bool oneFinger = false,
+    }) async {
+      final center = tester.getCenter(page());
+      final a = await tester.startGesture(center - direction * apart / 2, pointer: 1);
+      final b = await tester.startGesture(center + direction * apart / 2, pointer: 2);
+      for (var i = 0; i < 12; i++) {
+        if (!oneFinger) await a.moveBy(-direction * step / 2);
+        await b.moveBy(direction * (oneFinger ? step : step / 2));
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await a.up();
+      await b.up();
+      await settle(tester);
+    }
+
+    // Android's own touch slop, under half of Flutter's, which the swipes
+    // around the photo start at.
+    setUp(() {
+      final view = TestWidgetsFlutterBinding.instance.platformDispatcher.views.first;
+      view.gestureSettings = ui.GestureSettings(physicalTouchSlop: 8 * view.devicePixelRatio);
+      addTearDown(view.resetGestureSettings);
+    });
+
+    for (final (name, direction) in [
+      ('up and down', const Offset(0, 1)),
+      ('side to side', const Offset(1, 0)),
+      ('on a slant', const Offset(0.6, 0.8)),
+    ]) {
+      for (final oneFinger in [false, true]) {
+        testWidgets('$name${oneFinger ? ', one finger still' : ''}', (tester) async {
+          await open(tester, '/viewer/b?from=photos');
+          await pinch(tester, direction, step: 12, oneFinger: oneFinger);
+          expect(scale(tester), greaterThan(1.5));
+          expect(find.byType(ImageViewerScreen), findsOneWidget);
+          expect(bar('b.jpg'), findsOneWidget);
+        });
+      }
+    }
+
+    testWidgets('zoomed, one finger pans and the page stays', (tester) async {
+      await open(tester, '/viewer/b?from=photos');
+      await pinch(tester, const Offset(1, 0), step: 12, oneFinger: true);
+      final zoomed = scale(tester);
+      await tester.drag(page(), const Offset(-300, 0));
+      await settle(tester);
+      expect(bar('b.jpg'), findsOneWidget);
+      await tester.drag(page(), const Offset(0, 300));
+      await settle(tester);
+      expect(find.byType(ImageViewerScreen), findsOneWidget);
+      expect(scale(tester), zoomed);
+    });
+
+    testWidgets('pinched back to its own size, a flick down closes it', (tester) async {
+      await open(tester, '/viewer/b?from=photos');
+      await pinch(tester, const Offset(0, 1), step: 12, oneFinger: true);
+      expect(scale(tester), greaterThan(1.5));
+      await pinch(tester, const Offset(0, 1), apart: 300, step: -20);
+      expect(scale(tester), 1);
+      await tester.drag(page(), const Offset(0, 200));
+      await settle(tester);
+      expect(find.byType(ImageViewerScreen), findsNothing);
+    });
+  });
+}

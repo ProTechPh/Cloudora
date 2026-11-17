@@ -1,0 +1,614 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../../core/format/formatters.dart';
+import '../../../infrastructure/database/app_database.dart'
+    show TransferKind, TransferOrigin, TransferRow;
+import '../../../infrastructure/notifications/app_notifications.dart';
+import '../../../infrastructure/storage/preferences.dart';
+import '../../backup/data/backup_controller.dart';
+import '../../backup/data/watched_folders.dart';
+import '../../player/data/stream_server.dart';
+import '../../private/data/private_space.dart';
+import '../../takeout/data/takeout_import.dart';
+import '../domain/transfer_wait.dart';
+import 'transfer_notifications.dart';
+import 'transfer_queue.dart';
+
+/// Keeps transfers alive when Cloudora leaves the screen (Android).
+///
+/// TDLib does the actual network work on its own native threads, so all an
+/// upload needs to finish in the background is for the process to survive.
+/// A foreground service — the ongoing "Uploading 3 files · 42%" notification
+/// — is Android's way of saying so. It starts with the first active transfer
+/// and stops when the queue drains.
+///
+/// When the last transfer in flight steps back to wait for Wi-Fi, the
+/// service stays for a while longer. Android won't let an app in the
+/// background start it again, and Wi-Fi is often back in minutes, after a
+/// walk to the car, say, so the waiting rows can start the moment it is.
+///
+/// The notification shows the one-colour mark, and Pause while transfers
+/// the person started are running; photo backup has its own place to be
+/// stopped.
+///
+/// Android gives a data transfer service six hours in the background a
+/// day, and ends it when they are used up. The service tells the app
+/// ([timedOutSignal]), and from then on nothing tries to start it again,
+/// since Android won't allow it, until Cloudora is on screen, which gives
+/// the six hours back ([onScreen]).
+class TransferKeepAlive {
+  TransferKeepAlive(this._prefs);
+
+  final Preferences _prefs;
+
+  /// The route the transfer notification launches the app with. It rides on
+  /// the notification's launch intent as Android's initial route; the app
+  /// reads it as a LaunchRequest and opens Transfers over Home.
+  static const String notificationRoute = '/transfers';
+
+  /// The id of the Pause button, which the service's isolate sends on to
+  /// the app's.
+  static const String pauseButton = 'pause';
+
+  /// The id of the Pause backup button, which pauses photo backup for an
+  /// hour.
+  static const String pauseBackupButton = 'pause-backup';
+
+  /// The id of the Stop button, which ends a stream to another app.
+  static const String stopStreamButton = 'stop-stream';
+
+  /// What the service's isolate sends the app's when Android ends the
+  /// service at its time limit.
+  static const String timedOutSignal = 'timed-out';
+
+  static const int _serviceId = 4107;
+  static const Duration _updateEvery = Duration(milliseconds: 1500);
+
+  /// How long the service stays for transfers waiting for Wi-Fi.
+  static const Duration _lingerForWifi = Duration(minutes: 10);
+
+  /// The manifest entry naming the notification's small icon.
+  static const NotificationIcon _icon = NotificationIcon(
+    metaDataName: 'dev.ragoose.telegrive.STAT_ICON',
+  );
+
+  bool _running = false;
+  bool _starting = false;
+  DateTime _lastUpdate = DateTime.fromMillisecondsSinceEpoch(0);
+  (TransfersState, BackupState)? _pending;
+  (TransfersState, BackupState)? _latest;
+  Timer? _stopTimer;
+
+  /// Brings the notification up to date once [_updateEvery] is over, when
+  /// the last change came too soon after the one before to show at once.
+  Timer? _refreshTimer;
+
+  /// When the last transfer in flight stepped back to wait for Wi-Fi, while
+  /// the service was running; null when that isn't the case.
+  DateTime? _heldSince;
+  Timer? _lingerTimer;
+
+  /// The transfers in flight at the last update, to tell one that steps
+  /// back to wait for Wi-Fi from one that was waiting already.
+  Set<String> _inFlight = {};
+
+  /// A check of the watched phone folders, or a Google Photos import, was
+  /// sending files at the last update.
+  bool _watching = false;
+
+  /// Where a Google Photos import stood at the last update.
+  TakeoutState? _takeout;
+
+  /// Another app was reading a stream from Cloudora at the last update.
+  bool _streaming = false;
+
+  /// The service coming up, or the last time it did.
+  Completer<void>? _startup;
+
+  /// Completes once a start of the service under way is through, the
+  /// question about notifications included, so what is about to leave the
+  /// screen can wait for it: Android won't start the service from the
+  /// background.
+  Future<void> get started => _startup?.future ?? Future<void>.value();
+
+  /// Android ended the service at its time limit, and won't let it start
+  /// again until Cloudora is on screen.
+  bool _timedOut = false;
+
+  /// Whether Android ended the service at its time limit and Cloudora
+  /// hasn't been on screen since.
+  bool get timedOut => _timedOut;
+
+  static void _init() {
+    FlutterForegroundTask.init(
+      androidNotificationOptions: AndroidNotificationOptions(
+        channelId: AppNotifications.transfersChannel,
+        channelName: 'Transfers',
+        channelDescription: 'Progress of uploads and downloads',
+        channelImportance: NotificationChannelImportance.LOW,
+        priority: NotificationPriority.LOW,
+        onlyAlertOnce: true,
+      ),
+      iosNotificationOptions: const IOSNotificationOptions(showNotification: false),
+      foregroundTaskOptions: ForegroundTaskOptions(
+        eventAction: ForegroundTaskEventAction.nothing(),
+        allowWakeLock: true,
+        allowWifiLock: true,
+        allowAutoRestart: false,
+      ),
+    );
+  }
+
+  /// Anything worth keeping the process alive for: a transfer, a photo
+  /// backup pass that is uploading or a check of the watched folders (both
+  /// have short gaps between files that must not bounce the service off and
+  /// on, since Android won't let an app in the background start it again),
+  /// a stream another app is reading, or transfers that only just began to
+  /// wait for Wi-Fi. Looking through
+  /// the library sends nothing, so it holds no wake or Wi-Fi lock. Once
+  /// Android has ended the service at its time limit, nothing is until
+  /// Cloudora is on screen.
+  bool _isActive(TransfersState state, BackupState backup) =>
+      !_timedOut &&
+      (state.activeCount > 0 ||
+          _backingUp(state, backup) ||
+          _sendingFromFolders(state) ||
+          _streaming ||
+          _lingering);
+
+  bool get _lingering {
+    final since = _heldSince;
+    return since != null && DateTime.now().difference(since) < _lingerForWifi;
+  }
+
+  /// Notes when the last transfer in flight has stepped back to wait for
+  /// Wi-Fi, and looks again once the linger is over, since nothing else
+  /// may change by then. Rows that were waiting already, from before the
+  /// app opened, say, keep nothing alive when something else finishes.
+  void _noteHeld(TransfersState state) {
+    final active = state.active;
+    final steppedBack = state.waitingForWifi.any((t) => _inFlight.contains(t.id));
+    _inFlight = {for (final t in active) t.id};
+    final held = active.isEmpty && state.waitingForWifi.isNotEmpty;
+    if (!held) {
+      _heldSince = null;
+      _lingerTimer?.cancel();
+      _lingerTimer = null;
+    } else if (_running && _heldSince == null && steppedBack) {
+      _heldSince = DateTime.now();
+      _lingerTimer = Timer(_lingerForWifi, () {
+        _lingerTimer = null;
+        final latest = _latest;
+        if (latest != null) unawaited(update(latest.$1, latest.$2, watching: _watching, takeout: _takeout, streaming: _streaming));
+      });
+    }
+  }
+
+  /// A backup pass that is uploading. One whose upload Telegram has put on
+  /// a long wait, or that waits for room on the phone, or that stopped for
+  /// a wait Telegram asked for, sits out that wait without the service, and
+  /// so without a wake lock; the service starts again when the upload does.
+  /// A backup upload waiting for Wi-Fi doesn't stop the pass, which moves
+  /// on to the photos mobile data may carry.
+  static bool _backingUp(TransfersState state, BackupState backup) =>
+      backup.phase == BackupPhase.uploading &&
+      backup.pausedUntil == null &&
+      !state.held.any(
+        (t) =>
+            t.origin == TransferOrigin.backup &&
+            (t.wait is WaitingForTelegram || t.wait is WaitingForRoom),
+      );
+
+  /// A check of the watched folders, or an import, that is moving. Its
+  /// uploads are the person's kind, so one on a long Telegram wait or
+  /// waiting for room, as any upload then is, lets the phone sleep the way
+  /// a backup pass does.
+  bool _sendingFromFolders(TransfersState state) =>
+      _watching &&
+      !state.held.any((t) => t.wait is WaitingForTelegram || t.wait is WaitingForRoom);
+
+  /// Brings the service in line with [state], [backup], whether the
+  /// watched folders or an import are [watching], where the import stands,
+  /// [takeout], and whether another app is [streaming] from Cloudora.
+  Future<void> update(
+    TransfersState state,
+    BackupState backup, {
+    bool watching = false,
+    TakeoutState? takeout,
+    bool streaming = false,
+  }) async {
+    _latest = (state, backup);
+    _watching = watching;
+    _takeout = takeout;
+    _streaming = streaming;
+    _noteHeld(state);
+    if (!_isActive(state, backup)) {
+      _pending = null;
+      if (_running) {
+        // Linger briefly: the next photo is usually a moment away.
+        _stopTimer ??= Timer(const Duration(seconds: 6), () {
+          _stopTimer = null;
+          final latest = _latest;
+          if (latest != null && !_isActive(latest.$1, latest.$2)) unawaited(_stop());
+        });
+      }
+      return;
+    }
+    _stopTimer?.cancel();
+    _stopTimer = null;
+    if (_starting) {
+      _pending = (state, backup);
+      return;
+    }
+    if (!_running) {
+      await _start(state, backup);
+      return;
+    }
+    final now = DateTime.now();
+    final since = now.difference(_lastUpdate);
+    if (since < _updateEvery) {
+      _refreshTimer ??= Timer(_updateEvery - since, () {
+        _refreshTimer = null;
+        final latest = _latest;
+        if (latest != null) unawaited(update(latest.$1, latest.$2, watching: _watching, takeout: _takeout, streaming: _streaming));
+      });
+      return;
+    }
+    _refreshTimer?.cancel();
+    _refreshTimer = null;
+    // Between two files from the watched folders nothing is in flight for
+    // a moment, and the notification keeps saying what it said. An import
+    // says where the whole of it stands, files in hand or not.
+    final importing = _importing(_takeout);
+    if (_watching && !_streaming && state.active.isEmpty && !_backingUp(state, backup) && !importing) return;
+    _lastUpdate = now;
+    final (title, text) = describe(state, backup, takeout: _takeout, streaming: _streaming);
+    await FlutterForegroundTask.updateService(
+      notificationTitle: title,
+      notificationText: text,
+      notificationIcon: _icon,
+      notificationButtons: buttons(state, streaming: _streaming),
+    );
+  }
+
+  Future<void> _start(TransfersState state, BackupState backup) async {
+    _starting = true;
+    final startup = _startup = Completer<void>();
+    try {
+      _init();
+      // Asked once ever. Without it the service still runs; the
+      // notification just stays out of the shade, and Settings says so.
+      if (!_prefs.notificationsAsked) {
+        await _prefs.setNotificationsAsked();
+        final permission = await FlutterForegroundTask.checkNotificationPermission();
+        if (permission != NotificationPermission.granted) {
+          await FlutterForegroundTask.requestNotificationPermission();
+        }
+      }
+      final (title, text) = describe(state, backup, takeout: _takeout, streaming: _streaming);
+      final result = await FlutterForegroundTask.startService(
+        serviceId: _serviceId,
+        serviceTypes: const [ForegroundServiceTypes.dataSync],
+        notificationTitle: title,
+        notificationText: text,
+        notificationIcon: _icon,
+        notificationButtons: buttons(state, streaming: _streaming),
+        notificationInitialRoute: notificationRoute,
+        callback: transferServiceEntryPoint,
+      );
+      _running = result is ServiceRequestSuccess;
+      if (!_running) debugPrint('[KeepAlive] Could not start: $result');
+    } catch (e) {
+      debugPrint('[KeepAlive] $e');
+    } finally {
+      _starting = false;
+      startup.complete();
+    }
+    final pending = _pending;
+    _pending = null;
+    if (pending != null) await update(pending.$1, pending.$2, watching: _watching, takeout: _takeout, streaming: _streaming);
+  }
+
+  /// Android ended the service at its time limit. It has stopped already,
+  /// and the timers that would bring it back are dropped, since Android
+  /// won't let it start again from the background.
+  void stoppedAtTimeLimit() {
+    _timedOut = true;
+    _running = false;
+    _pending = null;
+    _stopTimer?.cancel();
+    _stopTimer = null;
+    _refreshTimer?.cancel();
+    _refreshTimer = null;
+    _lingerTimer?.cancel();
+    _lingerTimer = null;
+    _heldSince = null;
+  }
+
+  /// Cloudora is on screen, which gives the service its time back: it
+  /// starts again for whatever is still to do.
+  Future<void> onScreen() async {
+    if (!_timedOut) return;
+    _timedOut = false;
+    final latest = _latest;
+    if (latest != null) await update(latest.$1, latest.$2, watching: _watching, takeout: _takeout, streaming: _streaming);
+  }
+
+  Future<void> _stop() async {
+    _running = false;
+    _refreshTimer?.cancel();
+    _refreshTimer = null;
+    try {
+      await FlutterForegroundTask.stopService();
+    } catch (e) {
+      debugPrint('[KeepAlive] $e');
+    }
+  }
+
+  /// The notification's buttons for [state]: Pause while any transfer the
+  /// person started is in flight, Pause backup while photo backup sends,
+  /// which pauses it for an hour, and Stop while another app is [streaming].
+  @visibleForTesting
+  static List<NotificationButton> buttons(TransfersState state, {bool streaming = false}) => [
+    if (streaming) const NotificationButton(id: stopStreamButton, text: 'Stop streaming'),
+    if (state.active.any((t) => t.origin != TransferOrigin.backup))
+      const NotificationButton(id: pauseButton, text: 'Pause'),
+    if (state.active.any((t) => t.origin == TransferOrigin.backup))
+      const NotificationButton(id: pauseBackupButton, text: 'Pause backup'),
+  ];
+
+  /// A Google Photos import that is sending.
+  static bool _importing(TakeoutState? takeout) =>
+      takeout != null && takeout.working && takeout.progress != null && takeout.progress!.total > 0;
+
+  /// The notification's title and text for [state], [backup] and the
+  /// Google Photos import, [takeout]. Copies from chats are counted apart
+  /// from uploads, since nothing goes up, and by file rather than by byte,
+  /// since Telegram makes each in one request. An import counts as one job,
+  /// by its photos and its pace over the last minute, not as the files it
+  /// has in hand: alone it has the notification to itself. A stream names
+  /// no file, since the shade is there for anyone to see, and alone says
+  /// only that it runs.
+  @visibleForTesting
+  static (String, String) describe(
+    TransfersState state,
+    BackupState backup, {
+    TakeoutState? takeout,
+    bool streaming = false,
+  }) {
+    final inFlight = state.active;
+    if (streaming && inFlight.isEmpty && !_backingUp(state, backup) && !_importing(takeout)) {
+      return ('Streaming to another app', 'Cloudora stays on while the other app plays it');
+    }
+    final percent = '${(state.activeProgress * 100).round()}%';
+    if (inFlight.isNotEmpty && inFlight.every((t) => t.wait is WaitingForNetwork)) {
+      return ('Waiting for network', 'Carries on when you\'re back online · $percent');
+    }
+    if (inFlight.isEmpty && state.waitingForWifi.isNotEmpty) {
+      final waiting = state.waitingForWifi.length;
+      return (
+        'Waiting for Wi-Fi',
+        waiting == 1
+            ? '1 transfer starts on its own on Wi-Fi'
+            : '${Formatters.count(waiting, 'transfer')} start on their own on Wi-Fi',
+      );
+    }
+    final active = inFlight
+        .where((t) => t.origin != TransferOrigin.backup && t.origin != TransferOrigin.takeout)
+        .toList();
+    final copies = active.where((t) => t.origin == TransferOrigin.fromChat).length;
+    final uploads = active.where((t) => t.kind == TransferKind.upload).length - copies;
+    final downloads = active.length - uploads - copies;
+    final speed = state.active.fold<double>(0, (sum, t) => sum + t.bytesPerSecond);
+    final backingUp = _backingUp(state, backup);
+    final importing = _importing(takeout);
+    final progress = takeout?.progress;
+    final imported = importing
+        ? '${Formatters.number(progress!.total - progress.left)} of ${Formatters.number(progress.total)}'
+        : null;
+    final timeLeft = importing ? takeout!.timeLeft : null;
+
+    if (importing && active.isEmpty && !backingUp) {
+      return (
+        'Importing from Google Photos',
+        [
+          imported!,
+          if (timeLeft != null) Formatters.left(timeLeft),
+          if (takeout!.speed > 0) Formatters.speed(takeout.speed),
+        ].join(' · '),
+      );
+    }
+
+    final parts = [
+      if (importing) 'Importing $imported',
+      if (uploads > 0) '${importing ? 'uploading' : 'Uploading'} ${Formatters.count(uploads, 'file')}',
+      if (downloads > 0) 'Downloading ${Formatters.count(downloads, 'file')}',
+      if (copies > 0) 'Saving ${Formatters.count(copies, 'file')} from Telegram',
+      if (backingUp) active.isEmpty && !importing ? 'Backing up photos' : 'backing up photos',
+      if (streaming) 'streaming to another app',
+    ];
+    final title = parts.isEmpty ? 'Cloudora' : parts.join(' · ');
+    final text = [
+      if (backingUp && backup.total > 0)
+        '${Formatters.count(backup.remaining, 'item')} left'
+      else if (copies > 0 && copies == active.length)
+        '${Formatters.count(state.copyCount.left, 'file')} left'
+      else if (active.isNotEmpty)
+        '${(TransfersState.byteProgress(active) * 100).round()}%'
+      else if (timeLeft != null)
+        Formatters.left(timeLeft)
+      else
+        percent,
+      if (speed > 0) Formatters.speed(speed),
+    ].join(' · ');
+    return (title, text);
+  }
+}
+
+/// Runs inside the service's own isolate. It has little to do — the
+/// service exists only to keep the process, and TDLib, alive.
+@pragma('vm:entry-point')
+void transferServiceEntryPoint() {
+  FlutterForegroundTask.setTaskHandler(TransferTaskHandler());
+}
+
+/// The service's side: taps and buttons on its notification, and the end
+/// Android puts to it at its time limit, each passed on to the app.
+@visibleForTesting
+class TransferTaskHandler extends TaskHandler {
+  @override
+  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {}
+
+  @override
+  void onRepeatEvent(DateTime timestamp) {}
+
+  /// The app's isolate holds the queue and posts the notice, so it hears
+  /// when Android ends the service at its time limit ([isTimeout]). Any
+  /// other end is the app's own doing.
+  @override
+  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {
+    if (isTimeout) FlutterForegroundTask.sendDataToMain(TransferKeepAlive.timedOutSignal);
+  }
+
+  @override
+  void onNotificationPressed() =>
+      FlutterForegroundTask.launchApp(TransferKeepAlive.notificationRoute);
+
+  /// The app's isolate holds the queue, so the press goes there.
+  @override
+  void onNotificationButtonPressed(String id) => FlutterForegroundTask.sendDataToMain(id);
+}
+
+/// Watched from the app root; does nothing off Android, where it is null.
+///
+/// Besides the ongoing notification, it carries out Pause from the shade
+/// and posts the quiet notifications about the person's own transfers:
+/// 'Transfers paused' after Pause, cleared once nothing is paused, and one
+/// summary when a batch finishes while Cloudora is off screen. On screen,
+/// Home and the snacks already say it.
+///
+/// When Android ends the service at its time limit while Cloudora is off
+/// screen, the queue waits for the app and a notice says so. Once Cloudora
+/// is on screen the notice goes and everything carries on. One that ends
+/// while Cloudora is on screen starts again at once, since being there is
+/// what gives the time back.
+final transferKeepAliveProvider = Provider<TransferKeepAlive?>((ref) {
+  if (kIsWeb || !Platform.isAndroid) return null;
+  final keeper = TransferKeepAlive(ref.read(preferencesProvider));
+  final streamServer = ref.read(streamServerProvider);
+  void push() => unawaited(
+    keeper.update(
+      ref.read(transferQueueProvider),
+      ref.read(backupControllerProvider),
+      watching: ref.read(watchedFoldersProvider).working || ref.read(takeoutImportProvider).working,
+      takeout: ref.read(takeoutImportProvider),
+      streaming: streamServer.sharing.value,
+    ),
+  );
+
+  // When the transfers the person started last went from none in flight to
+  // some; null while none are.
+  DateTime? batchSince;
+  void noteBatch(TransfersState state) {
+    // What Android paused isn't finished: the batch goes on once the app
+    // is open.
+    if (keeper.timedOut) return;
+    final yours = state.active.any((t) => t.origin != TransferOrigin.backup);
+    if (yours) {
+      batchSince ??= DateTime.now();
+      return;
+    }
+    final since = batchSince;
+    if (since == null) return;
+    batchSince = null;
+    final summary = TransferSummary.of(
+      state.items,
+      since,
+      outOfSight: ref.read(privateOutOfSightProvider),
+    );
+    if (summary != null &&
+        WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+      unawaited(TransferNotifications.showSummary(summary));
+    }
+  }
+
+  Future<void> pauseYours() async {
+    bool yours(TransferRow row) => row.origin != TransferOrigin.backup;
+    final count = ref
+        .read(transferQueueProvider)
+        .items
+        .where((t) => t.status.isActive && yours(t.row))
+        .length;
+    if (count == 0) return;
+    await ref.read(transferQueueProvider.notifier).pauseAll(yours);
+    await TransferNotifications.showPaused(count);
+  }
+
+  Future<void> stoppedAtTimeLimit() async {
+    keeper.stoppedAtTimeLimit();
+    if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
+      await keeper.onScreen();
+      return;
+    }
+    ref.read(transferQueueProvider.notifier).waitForApp();
+    await TransferNotifications.showTimedOut();
+    // Opened while the notice went up.
+    if (!keeper.timedOut) await TransferNotifications.clearTimedOut();
+  }
+
+  void carryOn() {
+    if (!keeper.timedOut) return;
+    unawaited(TransferNotifications.clearTimedOut());
+    unawaited(keeper.onScreen());
+    ref.read(transferQueueProvider.notifier).appOpened();
+  }
+
+  void onData(Object data) {
+    if (data == TransferKeepAlive.pauseButton) unawaited(pauseYours());
+    if (data == TransferKeepAlive.pauseBackupButton) {
+      unawaited(
+        ref
+            .read(backupControllerProvider.notifier)
+            .pause(DateTime.now().add(const Duration(hours: 1))),
+      );
+    }
+    if (data == TransferKeepAlive.stopStreamButton) unawaited(streamServer.stopSharing());
+    if (data == TransferKeepAlive.timedOutSignal) unawaited(stoppedAtTimeLimit());
+  }
+
+  FlutterForegroundTask.addTaskDataCallback(onData);
+  final lifecycle = AppLifecycleListener(onResume: carryOn);
+  // Android may have closed the app while it waited; it is open now, and
+  // what waited carries on as it loads.
+  unawaited(TransferNotifications.clearTimedOut());
+  ref.listen<TransfersState>(transferQueueProvider, (_, next) {
+    push();
+    noteBatch(next);
+  });
+  ref.listen<int>(transferQueueProvider.select((s) => s.pausedCount), (previous, next) {
+    if (next == 0 && (previous ?? 0) > 0) unawaited(TransferNotifications.clearPaused());
+  });
+  ref.listen<BackupState>(backupControllerProvider, (_, _) => push(), fireImmediately: true);
+  ref.listen<bool>(watchedFoldersProvider.select((s) => s.working), (_, _) => push());
+  streamServer.sharing.addListener(push);
+  // The import's count and time left change between its files too.
+  ref.listen<(bool, int?, int?)>(
+    takeoutImportProvider.select((s) => (s.working, s.progress?.left, s.timeLeft?.inMinutes)),
+    (_, _) => push(),
+  );
+  ref.onDispose(() {
+    streamServer.sharing.removeListener(push);
+    lifecycle.dispose();
+    FlutterForegroundTask.removeTaskDataCallback(onData);
+    unawaited(
+      keeper.update(TransfersState.empty, const BackupState(phase: BackupPhase.off)),
+    );
+  });
+  return keeper;
+});
