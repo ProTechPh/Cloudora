@@ -12,21 +12,36 @@ permissions:
   contents: write
 
 jobs:
-  # The release tag comes from pubspec.yaml, so bumping the version there
-  # starts a new release instead of reusing the last one.
+  # Every push to main gets the next patch version from the newest release
+  # tag, so nothing has to be bumped by hand. A pushed tag wins as it is.
   version:
-    name: Read version
+    name: Work out the version
     runs-on: ubuntu-latest
     outputs:
+      version: ${{ steps.read.outputs.version }}
       tag: ${{ steps.read.outputs.tag }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # the tags pick the next version
 
-      - name: Read version from pubspec.yaml
+      - name: Work out the version
         id: read
         run: |
-          echo "tag=v$(sed -n 's/^version: *//p' pubspec.yaml | cut -d+ -f1)" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            latest="$(git tag -l 'v*' --sort=-v:refname | head -n1)"
+            base="${latest#v}"
+            [ -n "$base" ] || base="$(sed -n 's/^version: *//p' pubspec.yaml | cut -d+ -f1)"
+            major="$(echo "$base" | cut -d. -f1)"
+            minor="$(echo "$base" | cut -d. -f2)"
+            patch="$(echo "$base" | cut -d. -f3 | cut -d- -f1)"
+            tag="v$major.$minor.$(( ${patch:-0} + 1 ))"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 
   build-apk:
     name: Build Android APK
@@ -55,6 +70,8 @@ jobs:
       - name: Build Android APK
         run: |
           flutter build apk --release --split-per-abi \
+            --build-name="${{ needs.version.outputs.version }}" \
+            --build-number="${{ github.run_number }}" \
             --android-skip-build-dependency-validation \
             --dart-define=TELEGRAM_API_ID="${{ secrets.TELEGRAM_API_ID }}" \
             --dart-define=TELEGRAM_API_HASH="${{ secrets.TELEGRAM_API_HASH }}"
@@ -138,6 +155,8 @@ jobs:
       - name: Build iOS app without codesigning
         run: |
           flutter build ios --release --no-codesign \
+            --build-name="${{ needs.version.outputs.version }}" \
+            --build-number="${{ github.run_number }}" \
             --dart-define=TELEGRAM_API_ID="${{ secrets.TELEGRAM_API_ID }}" \
             --dart-define=TELEGRAM_API_HASH="${{ secrets.TELEGRAM_API_HASH }}"
 
