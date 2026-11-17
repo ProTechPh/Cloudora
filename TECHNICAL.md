@@ -1063,9 +1063,9 @@ changes the site.
 
 ## Tips
 
-Settings › About › Support Cloudora opens Dawit's tip page on
-[Jami](https://jami.bio/daveragoose) (`AppConfig.support`), where people
-send a tip in birr. Jami takes the payment; nothing about it reaches the
+Settings › About › Support Cloudora opens the tip page on
+[Jami](https://jami.bio/jericko) (`AppConfig.support`), where people
+can send a tip. Jami takes the payment; nothing about it reaches the
 app, and every feature is there for everyone.
 
 ## Platform support and roadmap

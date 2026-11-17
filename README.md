@@ -66,7 +66,7 @@ On a new phone, sign in the same way and your whole drive comes back.
 ## Support
 
 Cloudora is free, with no ads. If it's useful to you, you can
-[send a tip on Jami](https://jami.bio/daveragoose).
+[send a tip on Jami](https://jami.bio/jericko).
 If something doesn't work, [report a
 problem](https://github.com/protechph/Cloudora/issues).
 
