@@ -60,3 +60,80 @@ jobs:
           files: build/app/outputs/flutter-apk/app-release.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Unsigned IPA for sideloading (Sideloadly / AltStore). Needs no Apple
+  # certificates. To ship to TestFlight instead, add signing secrets and swap
+  # `flutter build ios --no-codesign` for `flutter build ipa`.
+  # Skipped on pull requests: an iOS build costs far more than the APK.
+  build-ipa:
+    name: Build iOS IPA
+    if: github.event_name != 'pull_request'
+    runs-on: macos-latest
+    timeout-minutes: 300
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install TDLib build tools
+        run: brew install gperf
+
+      # TDLib is not in the repo and takes a long time to compile, so keep the
+      # built framework between runs. Bump the key if the script changes.
+      - name: Cache TDLib framework
+        id: tdlib-cache
+        uses: actions/cache@v4
+        with:
+          path: ios/Frameworks/tdjson.xcframework
+          key: tdjson-${{ hashFiles('tool/build_tdlib_ios.sh') }}
+
+      - name: Build TDLib
+        if: steps.tdlib-cache.outputs.cache-hit != 'true'
+        run: bash tool/build_tdlib_ios.sh
+
+      # Sources and intermediate objects are several GB; the runner needs the
+      # space for the Xcode build.
+      - name: Free TDLib build space
+        if: steps.tdlib-cache.outputs.cache-hit != 'true'
+        run: rm -rf build/tdlib-ios
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build iOS app without codesigning
+        run: |
+          flutter build ios --release --no-codesign \
+            --dart-define=TELEGRAM_API_ID="${{ secrets.TELEGRAM_API_ID }}" \
+            --dart-define=TELEGRAM_API_HASH="${{ secrets.TELEGRAM_API_HASH }}"
+
+      # Flutter does not write an .ipa when codesigning is skipped.
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p build/ipa/Payload
+          cp -R build/ios/iphoneos/Runner.app build/ipa/Payload/
+          cd build/ipa
+          zip -qry ../cloudora-release.ipa Payload
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudora-release-ipa
+          path: build/cloudora-release.ipa
+          if-no-files-found: error
+
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v1.0.0' }}
+          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'Cloudora v1.0.0' }}
+          draft: false
+          prerelease: false
+          files: build/cloudora-release.ipa
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
