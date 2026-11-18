@@ -68,12 +68,46 @@
     else if (light.addListener) light.addListener(follow);
   }
 
+  // ── Depth: light under the pointer, phone behind the scroll ────────────
+  // Both are motion, so both stop when the visitor asks for less of it.
+
+  var calm = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+  var hero = $('.hero');
+  var heroVisual = $('.hero-visual');
+
+  if (hero && !calm) {
+    var hx = 0, hy = 0, waiting = false;
+    hero.addEventListener('pointermove', function (e) {
+      hx = e.clientX;
+      hy = e.clientY;
+      if (waiting) return;
+      waiting = true;
+      requestAnimationFrame(function () {
+        waiting = false;
+        var r = hero.getBoundingClientRect();
+        hero.style.setProperty('--hx', (hx - r.left) + 'px');
+        hero.style.setProperty('--hy', (hy - r.top) + 'px');
+      });
+    }, { passive: true });
+  }
+
   // ── Header ─────────────────────────────────────────────────────────────
 
   var nav = $('[data-nav]');
   if (nav) {
-    var onScroll = function () { nav.classList.toggle('scrolled', window.scrollY > 8); };
+    var onScroll = function () {
+      nav.classList.toggle('scrolled', window.scrollY > 8);
+      // How far down the page the reader is, under the header.
+      var room = document.documentElement.scrollHeight - window.innerHeight;
+      var read = room > 0 ? Math.min(1, window.scrollY / room) : 0;
+      nav.style.setProperty('--progress', (read * 100).toFixed(2) + '%');
+      // The phone lags the page slightly, so the hero has depth.
+      if (heroVisual && !calm) {
+        heroVisual.style.translate = '0 ' + Math.min(30, window.scrollY * 0.06).toFixed(1) + 'px';
+      }
+    };
     window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll, { passive: true });
     onScroll();
   }
 
@@ -385,8 +419,21 @@
     });
   });
 
-  // ── Reveal on scroll ───────────────────────────────────────────────────
-  // Only what starts below the fold is hidden, and only once the observer
+  // ── Light under the pointer ────────────────────────────────────────────
+  // The feature card's glow follows the cursor; touch screens never see it.
+
+  var bento = $('.bento');
+  if (bento && window.matchMedia && matchMedia('(hover: hover)').matches) {
+    bento.addEventListener('pointermove', function (e) {
+      var card = e.target.closest && e.target.closest('.feature');
+      if (!card) return;
+      var r = card.getBoundingClientRect();
+      card.style.setProperty('--mx', (e.clientX - r.left) + 'px');
+      card.style.setProperty('--my', (e.clientY - r.top) + 'px');
+    }, { passive: true });
+  }
+
+  // ── Reveal on scroll ───────────────────────────────────────────────────  // Only what starts below the fold is hidden, and only once the observer
   // exists, so nothing stays invisible if this script fails.
 
   if ('IntersectionObserver' in window &&

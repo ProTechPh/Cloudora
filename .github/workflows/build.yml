@@ -67,9 +67,47 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      # Play Store uploads are signed with the upload key that
+      # android/app/build.gradle.kts reads from android/key.properties.
+      # Secrets: ANDROID_KEYSTORE_BASE64 (the .jks, base64 -w0), plus
+      # ANDROID_STORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD.
+      # Without them the bundle is skipped: a debug-signed .aab is no use.
+      - name: Set up the upload key
+        id: key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret, so no .aab is built."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > android/upload-keystore.jks
+          cat > android/key.properties <<EOF
+          storeFile=upload-keystore.jks
+          storePassword=$STORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
       - name: Build Android APK
         run: |
           flutter build apk --release --split-per-abi \
+            --build-name="${{ needs.version.outputs.version }}" \
+            --build-number="${{ github.run_number }}" \
+            --android-skip-build-dependency-validation \
+            --dart-define=TELEGRAM_API_ID="${{ secrets.TELEGRAM_API_ID }}" \
+            --dart-define=TELEGRAM_API_HASH="${{ secrets.TELEGRAM_API_HASH }}"
+
+      # One bundle for Play Console, signed with the upload key above.
+      - name: Build Android App Bundle
+        if: steps.key.outputs.signed == 'true'
+        run: |
+          flutter build appbundle --release \
             --build-name="${{ needs.version.outputs.version }}" \
             --build-number="${{ github.run_number }}" \
             --android-skip-build-dependency-validation \
@@ -80,18 +118,22 @@ jobs:
       - name: Name release files
         env:
           TAG: ${{ needs.version.outputs.tag }}
+          SIGNED: ${{ steps.key.outputs.signed }}
         run: |
           mkdir -p dist
           for abi in arm64-v8a armeabi-v7a x86_64; do
             cp "build/app/outputs/flutter-apk/app-$abi-release.apk" "dist/cloudora-${TAG#v}-$abi.apk"
           done
+          if [ "$SIGNED" = "true" ]; then
+            cp build/app/outputs/bundle/release/app-release.aab "dist/cloudora-${TAG#v}.aab"
+          fi
           ls -lh dist
 
-      - name: Upload APK artifacts
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: cloudora-release-apk
-          path: dist/*.apk
+          path: dist/
           if-no-files-found: error
 
       - name: Create or Update GitHub Release
@@ -102,7 +144,7 @@ jobs:
           name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('Cloudora {0}', needs.version.outputs.tag) }}
           draft: false
           prerelease: false
-          files: dist/*.apk
+          files: dist/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
