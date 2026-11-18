@@ -18,6 +18,12 @@
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28"/>
+    <!-- ML Kit's scanner delegate activity is locked to portrait, which makes
+         Android imply this feature as required and hide the app from devices
+         without it. Nothing in Cloudora itself is locked to an orientation. -->
+    <uses-feature
+        android:name="android.hardware.screen.portrait"
+        android:required="false"/>
 
     <!-- Predictive back: a back gesture previews the screen behind, and the
          app's own back handling (Home asks twice) keeps working through it. -->
