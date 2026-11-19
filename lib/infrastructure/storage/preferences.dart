@@ -99,6 +99,12 @@ class Preferences {
   Future<void> clearDriveChatId(int userId) =>
       _prefs.remove('drive_chat_$userId');
 
+  /// Whether the channel was one this account created. A drive someone
+  /// shared that no longer answers is reported instead of replaced.
+  bool driveOwned(int chatId) => _prefs.getBool('drive_owned_$chatId') ?? true;
+  Future<void> setDriveOwned(int chatId, bool owned) =>
+      _prefs.setBool('drive_owned_$chatId', owned);
+
   /// The account and channel of the drive last opened here, as JSON
   /// without the phone number, so Home can show the drive before Telegram
   /// answers. The wipe removes it with the drive.
@@ -172,6 +178,7 @@ class Preferences {
   /// index again leaves true.
   static const List<String> _channelKeys = [
     'drive_card_',
+    'drive_owned_',
     'index_copy_at_',
     'index_copy_print_',
   ];

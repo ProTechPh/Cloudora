@@ -20,7 +20,7 @@ import '../../drive/data/index_copies.dart';
 import '../../drive/domain/manifest.dart';
 import '../../transfers/data/transfer_queue.dart';
 
-enum SetupStep { account, channel, indexing, done }
+enum SetupStep { account, channel, indexing, choose, done }
 
 @immutable
 class SetupState {
@@ -29,6 +29,8 @@ class SetupState {
     this.createdChannel = false,
     this.error,
     this.timedOut = false,
+    this.choices = const [],
+    this.sharedGone = false,
   });
 
   final SetupStep step;
@@ -41,17 +43,29 @@ class SetupState {
   /// that blocks Telegram is all there is to see.
   final bool timedOut;
 
+  /// The drives found when there is more than one and no own drive, for
+  /// the person to pick from.
+  final List<DriveOption> choices;
+
+  /// The shared drive this phone last opened is gone, or no longer this
+  /// account's to open. Nothing is created in its place.
+  final bool sharedGone;
+
   SetupState copyWith({
     SetupStep? step,
     bool? createdChannel,
     String? error,
     bool? timedOut,
     bool clearError = false,
+    List<DriveOption>? choices,
+    bool? sharedGone,
   }) => SetupState(
     step: step ?? this.step,
     createdChannel: createdChannel ?? this.createdChannel,
     error: clearError ? null : (error ?? this.error),
     timedOut: clearError ? false : (timedOut ?? this.timedOut),
+    choices: choices ?? this.choices,
+    sharedGone: sharedGone ?? this.sharedGone,
   );
 }
 
@@ -75,6 +89,10 @@ class DriveSetup extends Notifier<SetupState> {
       'so deleting or editing these messages changes it.';
 
   Future<void>? _running;
+
+  /// Set while the person asks for a drive of their own, so the search
+  /// doesn't hand them someone else's instead.
+  bool _creatingOwn = false;
 
   TelegramClient get _client => ref.read(telegramClientProvider);
   Preferences get _prefs => ref.read(preferencesProvider);
@@ -113,6 +131,7 @@ class DriveSetup extends Notifier<SetupState> {
         await _prefs.forgetChannel(snapshot.chatId);
       }
       await _prefs.setDriveChatId(me.id, chat.id);
+      await _prefs.setDriveOwned(chat.id, role == DriveRole.owner);
 
       final session = DriveSession(
         userId: me.id,
@@ -232,6 +251,34 @@ class DriveSetup extends Notifier<SetupState> {
     return found;
   }
 
+  /// Opens one of the drives Setup offered when it found several.
+  Future<void> openChosen(int chatId) async {
+    try {
+      await switchTo(chatId);
+    } on TelegramException catch (e) {
+      state = state.copyWith(error: e.friendlyMessage, timedOut: e.code == 408);
+    } catch (e) {
+      debugPrint('[DriveSetup] $e');
+      state = state.copyWith(error: 'Something went wrong: $e');
+    }
+  }
+
+  /// Makes a drive of this account's own, leaving someone else's alone.
+  Future<void> createOwnDrive() async {
+    final me = await _client.send<td.User>(const td.GetMe());
+    final saved = _prefs.driveChatId(me.id);
+    if (saved != null) {
+      await _prefs.forgetChannel(saved);
+      await _prefs.clearDriveChatId(me.id);
+    }
+    _creatingOwn = true;
+    try {
+      await run();
+    } finally {
+      _creatingOwn = false;
+    }
+  }
+
   Future<(td.Chat, bool, DriveRole)?> _locateOrCreate(int userId) async {
     final saved = _prefs.driveChatId(userId);
     if (saved != null) {
@@ -239,10 +286,39 @@ class DriveSetup extends Notifier<SetupState> {
       if (channel != null) {
         return (await _brand(channel), false, channel.role);
       }
+      // A drive someone shared that no longer answers is reported rather
+      // than quietly replaced by a new, empty one.
+      if (!_creatingOwn && !_prefs.driveOwned(saved)) {
+        state = state.copyWith(step: SetupStep.done, sharedGone: true);
+        return null;
+      }
     }
 
-    final found = await _search();
-    if (found != null) return (await _brand(found), false, found.role);
+    if (!_creatingOwn) {
+      final found = await _searchAll();
+      final owned = found
+          .where((channel) => channel.role == DriveRole.owner)
+          .firstOrNull;
+      if (owned != null) return (await _brand(owned), false, owned.role);
+      if (found.length == 1) {
+        final one = found.single;
+        return (await _brand(one), false, one.role);
+      }
+      if (found.length > 1) {
+        state = state.copyWith(
+          step: SetupStep.choose,
+          choices: [
+            for (final channel in found)
+              (
+                chatId: channel.chat.id,
+                title: channel.chat.title,
+                role: channel.role,
+              ),
+          ],
+        );
+        return null;
+      }
+    }
 
     final chat = await _client.send<td.Chat>(
       const td.CreateNewSupergroupChat(
@@ -406,35 +482,41 @@ class DriveSetup extends Notifier<SetupState> {
     return file.path;
   }
 
-  /// Finds an existing drive — the reinstall and new-phone path.
+  /// Finds every drive this account can open — the reinstall, new-phone and
+  /// shared-drive path.
   ///
   /// A fresh sign-in knows none of the account's chats yet, and the drive
   /// sits in the Archive, so a title search alone can miss it. If it does,
-  /// the chat lists are loaded and every archived channel this account owns
-  /// is checked for the drive message — which also finds a drive someone
-  /// renamed.
-  Future<_DriveChannel?> _search() async {
-    final byTitle = await _searchByTitle();
-    if (byTitle != null) return byTitle;
+  /// the chat lists are loaded and each channel is checked for the drive
+  /// message — which also finds a drive someone renamed, and one someone
+  /// else shared.
+  Future<List<_DriveChannel>> _searchAll() async {
+    final found = <int, _DriveChannel>{};
 
+    Future<void> take(Iterable<int> ids) async {
+      for (final id in ids) {
+        if (found.containsKey(id)) continue;
+        final channel = await _driveChannel(id, requireMark: true);
+        if (channel != null) found[id] = channel;
+      }
+    }
+
+    await take(await _searchByTitle());
     await _loadChatList(const td.ChatListArchive());
     await _loadChatList(const td.ChatListMain());
+    await take(await _searchByTitle());
 
-    final retry = await _searchByTitle();
-    if (retry != null) return retry;
-
-    try {
-      final archived = await _client.send<td.Chats>(
-        const td.GetChats(chatList: td.ChatListArchive(), limit: 500),
-      );
-      for (final chatId in archived.chatIds) {
-        final channel = await _driveChannel(chatId, requireMark: true);
-        if (channel != null) return channel;
+    for (final list in const [td.ChatListMain(), td.ChatListArchive()]) {
+      try {
+        final chats = await _client.send<td.Chats>(
+          td.GetChats(chatList: list, limit: 200),
+        );
+        await take(chats.chatIds);
+      } catch (e) {
+        debugPrint('[DriveSetup] Chat list scan failed: $e');
       }
-    } catch (e) {
-      debugPrint('[DriveSetup] Archive scan failed: $e');
     }
-    return null;
+    return found.values.toList();
   }
 
   /// Pulls a chat list into TDLib, a page at a time, until it is complete
@@ -450,7 +532,7 @@ class DriveSetup extends Notifier<SetupState> {
     }
   }
 
-  Future<_DriveChannel?> _searchByTitle() async {
+  Future<List<int>> _searchByTitle() async {
     final candidates = <int>{};
     for (final title in const [channelTitle, 'Cloudora']) {
       for (final request in [
@@ -464,11 +546,7 @@ class DriveSetup extends Notifier<SetupState> {
         }
       }
     }
-    for (final chatId in candidates) {
-      final channel = await _driveChannel(chatId, requireMark: true);
-      if (channel != null) return channel;
-    }
-    return null;
+    return candidates.toList();
   }
 
   /// [chatId] if it is a channel holding the drive, with the role this

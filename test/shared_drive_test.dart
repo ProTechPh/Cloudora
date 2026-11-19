@@ -17,12 +17,23 @@ import 'support/fake_telegram.dart';
 
 /// TDLib for an account in a channel whose status is [group].
 class _Telegram extends FakeTelegram {
-  _Telegram({required this.group, this.offline = false});
+  _Telegram({
+    required this.group,
+    this.offline = false,
+    this.chats = const [testChatId],
+    this.missing = false,
+  });
 
   final td.Supergroup group;
 
   /// Every request fails, as on a phone with no connection.
   final bool offline;
+
+  /// The channels the account is in.
+  final List<int> chats;
+
+  /// The saved channel no longer answers.
+  final bool missing;
   final asked = <td.TdFunction>[];
 
   Iterable<T> askedFor<T>() => asked.whereType<T>();
@@ -34,16 +45,17 @@ class _Telegram extends FakeTelegram {
     switch (function) {
       case td.GetMe():
         return testUser();
-      case td.GetChat():
-        return channelChat();
+      case td.GetChat(:final chatId):
+        if (missing) throw const TelegramException(400, 'CHAT_ID_INVALID');
+        return channelChat().copyWith(id: chatId);
       case td.GetSupergroup():
         return group;
       case td.SearchChatsOnServer() || td.SearchChats():
-        return const td.Chats(totalCount: 1, chatIds: [testChatId]);
+        return td.Chats(totalCount: chats.length, chatIds: chats);
       case td.LoadChats():
         throw const TelegramException(404, 'Not Found');
       case td.GetChats():
-        return const td.Chats(totalCount: 1, chatIds: [testChatId]);
+        return td.Chats(totalCount: chats.length, chatIds: chats);
       case td.GetChatPinnedMessage():
         return driveMessage(50);
       case td.SearchChatMessages():
@@ -88,15 +100,24 @@ void main() {
     td.Supergroup group, {
     bool offline = false,
     bool saved = false,
+    List<int> chats = const [testChatId],
+    bool missing = false,
+    bool owned = true,
   }) async {
     // ignore: invalid_use_of_visible_for_testing_member
     SharedPreferences.setMockInitialValues({
       'last_user_id': 1,
       if (saved) 'drive_chat_1': testChatId,
+      if (saved) 'drive_owned_$testChatId': owned,
     });
     final shared = await SharedPreferences.getInstance();
     final db = AppDatabase(NativeDatabase.memory());
-    final telegram = _Telegram(group: group, offline: offline);
+    final telegram = _Telegram(
+      group: group,
+      offline: offline,
+      chats: chats,
+      missing: missing,
+    );
     final container = ProviderContainer(
       overrides: [
         sharedPreferencesProvider.overrideWithValue(shared),
@@ -139,5 +160,29 @@ void main() {
     );
     expect(container.read(driveSetupProvider).error, isNotNull);
     expect(container.read(driveSessionProvider), isNull);
+  });
+
+  test('two shared drives ask which one before opening either', () async {
+    const otherChatId = -300;
+    final (container, _) = await open(
+      memberSupergroup(),
+      chats: const [otherChatId, testChatId],
+    );
+
+    expect(container.read(driveSetupProvider).step, SetupStep.choose);
+    expect(container.read(driveSetupProvider).choices, hasLength(2));
+    expect(container.read(driveSessionProvider), isNull);
+  });
+
+  test('a shared drive that is gone is reported, not replaced', () async {
+    final (container, telegram) = await open(
+      memberSupergroup(),
+      saved: true,
+      missing: true,
+      owned: false,
+    );
+
+    expect(container.read(driveSetupProvider).sharedGone, isTrue);
+    expect(telegram.askedFor<td.CreateNewSupergroupChat>(), isEmpty);
   });
 }
