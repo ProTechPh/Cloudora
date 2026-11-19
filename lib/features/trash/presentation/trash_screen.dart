@@ -5,6 +5,7 @@ import '../../../app/theme/tokens.dart';
 import '../../../core/format/formatters.dart';
 import '../../../core/widgets/common.dart';
 import '../../drive/data/drive_repository.dart';
+import '../../drive/data/drive_session.dart';
 import '../../drive/domain/drive_models.dart';
 import '../../files/presentation/file_actions.dart';
 import '../../files/presentation/file_location.dart';
@@ -25,6 +26,7 @@ class TrashScreen extends ConsumerWidget {
     // Where each item goes back to on Restore. Null until the folders are
     // read; rows then go without a place rather than all reading 'Files'.
     final byId = ref.watch(folderIndexProvider).value;
+    final canEdit = ref.watch(driveCanEditProvider);
     String place(String? folderId) =>
         byId == null ? '' : ' · ${locationOf(byId, folderId)}';
 
@@ -32,7 +34,7 @@ class TrashScreen extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('Trash'),
         actions: [
-          if (contents != null && !contents.isEmpty)
+          if (canEdit && contents != null && !contents.isEmpty)
             TextButton(
               onPressed: () => FileActions.emptyTrash(context, ref, contents),
               child: const Text('Empty trash'),
@@ -120,6 +122,7 @@ class TrashScreen extends ConsumerWidget {
         }
 
         final colors = context.colors;
+        final canEdit = ref.read(driveCanEditProvider);
         return SafeArea(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -140,36 +143,43 @@ class TrashScreen extends ConsumerWidget {
                 ),
               ),
               const Divider(height: 1),
-              ListTile(
-                leading: Icon(Icons.restore_rounded, color: colors.text2),
-                title: const Text('Restore'),
-                onTap: () => run(
-                  () => FileActions.restore(
-                    context,
-                    ref,
-                    files: files,
-                    folders: folders,
+              if (!canEdit)
+                Padding(
+                  padding: const EdgeInsets.all(Space.gutter),
+                  child: Text(readOnlyNotice, style: context.text.bodyMedium),
+                ),
+              if (canEdit)
+                ListTile(
+                  leading: Icon(Icons.restore_rounded, color: colors.text2),
+                  title: const Text('Restore'),
+                  onTap: () => run(
+                    () => FileActions.restore(
+                      context,
+                      ref,
+                      files: files,
+                      folders: folders,
+                    ),
                   ),
                 ),
-              ),
-              ListTile(
-                leading: Icon(
-                  Icons.delete_forever_outlined,
-                  color: colors.danger,
-                ),
-                title: Text(
-                  'Delete for good',
-                  style: context.text.bodyLarge?.copyWith(color: colors.danger),
-                ),
-                onTap: () => run(
-                  () => FileActions.deleteForever(
-                    context,
-                    ref,
-                    files: files,
-                    folders: folders,
+              if (canEdit)
+                ListTile(
+                  leading: Icon(
+                    Icons.delete_forever_outlined,
+                    color: colors.danger,
+                  ),
+                  title: Text(
+                    'Delete for good',
+                    style: context.text.bodyLarge?.copyWith(color: colors.danger),
+                  ),
+                  onTap: () => run(
+                    () => FileActions.deleteForever(
+                      context,
+                      ref,
+                      files: files,
+                      folders: folders,
+                    ),
                   ),
                 ),
-              ),
             ],
           ),
         );

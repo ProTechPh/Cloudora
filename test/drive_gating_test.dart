@@ -43,6 +43,17 @@ DriveFile file() {
   );
 }
 
+DriveFolder folder() {
+  final at = DateTime(2026, 9, 26);
+  return DriveFolder(
+    id: 'd1',
+    parentId: null,
+    name: 'Docs',
+    createdAt: at,
+    modifiedAt: at,
+  );
+}
+
 void main() {
   Future<void> pumpSheet(WidgetTester tester, DriveRole role) async {
     await tester.pumpWidget(
@@ -121,6 +132,45 @@ void main() {
     await pumpNew(tester, DriveRole.editor);
 
     expect(find.text('Upload files'), findsOneWidget);
+  });
+
+  Future<void> pumpFolderSheet(WidgetTester tester, DriveRole role) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [driveSessionProvider.overrideWith(() => _Session(role))],
+        child: MaterialApp(
+          theme: AppTheme.light(),
+          home: Scaffold(
+            body: Consumer(
+              builder: (context, ref, _) => Center(
+                child: TextButton(
+                  onPressed: () =>
+                      FileActions.showFolderSheet(context, ref, folder()),
+                  child: const Text('open folder'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open folder'));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('an editor cannot move a folder to Private', (tester) async {
+    await pumpFolderSheet(tester, DriveRole.editor);
+
+    expect(find.text('Rename'), findsOneWidget);
+    expect(find.text('Move to Private'), findsNothing);
+  });
+
+  testWidgets('a viewer gets no folder actions at all', (tester) async {
+    await pumpFolderSheet(tester, DriveRole.viewer);
+
+    expect(find.text('Rename'), findsNothing);
+    expect(find.text('Add to Starred'), findsNothing);
+    expect(find.text('Move to Trash'), findsNothing);
   });
 
   test('a refusal by rights is named, not shown as a raw code', () {

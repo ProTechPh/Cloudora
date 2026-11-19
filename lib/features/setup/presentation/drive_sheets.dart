@@ -7,6 +7,7 @@ import '../../../app/theme/tokens.dart';
 import '../../../core/widgets/common.dart';
 import '../../../infrastructure/telegram/telegram_client.dart';
 import '../../drive/data/drive_session.dart';
+import '../../transfers/data/transfer_queue.dart';
 import '../data/drive_setup.dart';
 
 /// How a drive's role reads in a list.
@@ -48,6 +49,12 @@ class DriveChoiceList extends StatelessWidget {
 /// Opens another drive this account can use, after saying what the switch
 /// costs: transfers called off, and the new drive read from the beginning.
 Future<void> showDriveSwitchSheet(BuildContext context, WidgetRef ref) {
+  final drives = ref.read(driveSetupProvider.notifier).switchableDrives();
+  final waiting = ref
+      .read(transferQueueProvider)
+      .items
+      .where((t) => t.status.isPending)
+      .length;
   return showModalBottomSheet<void>(
     context: context,
     useRootNavigator: true,
@@ -56,7 +63,7 @@ Future<void> showDriveSwitchSheet(BuildContext context, WidgetRef ref) {
       child: Padding(
         padding: const EdgeInsets.only(bottom: Space.s),
         child: FutureBuilder<List<DriveOption>>(
-          future: ref.read(driveSetupProvider.notifier).switchableDrives(),
+          future: drives,
           builder: (_, snapshot) {
             if (snapshot.connectionState != ConnectionState.done) {
               return const Padding(
@@ -108,6 +115,7 @@ Future<void> showDriveSwitchSheet(BuildContext context, WidgetRef ref) {
                     ref,
                     sheetContext,
                     option,
+                    waiting,
                   ),
                 ),
               ],
@@ -124,7 +132,13 @@ Future<void> _confirmSwitch(
   WidgetRef ref,
   BuildContext sheet,
   DriveOption option,
+  int waiting,
 ) async {
+  final transfers = waiting == 0
+      ? 'No transfers are waiting.'
+      : waiting == 1
+      ? 'One waiting transfer is cancelled.'
+      : '$waiting waiting transfers are cancelled.';
   final yes = await showDialog<bool>(
     context: sheet,
     builder: (dialog) => AlertDialog(
@@ -132,7 +146,7 @@ Future<void> _confirmSwitch(
       content: Text(
         'This phone forgets what it kept for the drive it shows now: '
         'waiting uploads, offline copies and which photos are backed up. '
-        'Nothing in Telegram is deleted. "${option.title}" opens next.',
+        '$transfers Nothing in Telegram is deleted. "${option.title}" opens next.',
       ),
       actions: [
         TextButton(
@@ -163,6 +177,15 @@ Future<void> showInviteSheet(
   WidgetRef ref,
   DriveSession session,
 ) {
+  final link = ref.read(telegramClientProvider).send<td.ChatInviteLink>(
+    td.CreateChatInviteLink(
+      chatId: session.chatId,
+      name: 'Cloudora',
+      expirationDate: 0,
+      memberLimit: 0,
+      createsJoinRequest: false,
+    ),
+  );
   return showModalBottomSheet<void>(
     context: context,
     useRootNavigator: true,
@@ -171,15 +194,7 @@ Future<void> showInviteSheet(
       child: Padding(
         padding: const EdgeInsets.all(Space.gutter),
         child: FutureBuilder<td.ChatInviteLink>(
-          future: ref.read(telegramClientProvider).send<td.ChatInviteLink>(
-            td.CreateChatInviteLink(
-              chatId: session.chatId,
-              name: 'Cloudora',
-              expirationDate: 0,
-              memberLimit: 0,
-              createsJoinRequest: false,
-            ),
-          ),
+          future: link,
           builder: (_, snapshot) {
             if (snapshot.connectionState != ConnectionState.done) {
               return const SizedBox(

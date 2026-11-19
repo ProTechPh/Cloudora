@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:drift/native.dart';
@@ -22,6 +23,7 @@ class _Telegram extends FakeTelegram {
     this.offline = false,
     this.chats = const [testChatId],
     this.missing = false,
+    this.noCard = false,
   });
 
   /// The account's status in the channel, which a test may change as
@@ -36,6 +38,9 @@ class _Telegram extends FakeTelegram {
 
   /// The saved channel no longer answers.
   final bool missing;
+
+  /// The channel answers, but its drive message is gone.
+  final bool noCard;
   final asked = <td.TdFunction>[];
 
   Iterable<T> askedFor<T>() => asked.whereType<T>();
@@ -59,6 +64,7 @@ class _Telegram extends FakeTelegram {
       case td.GetChats():
         return td.Chats(totalCount: chats.length, chatIds: chats);
       case td.GetChatPinnedMessage():
+        if (noCard) throw const TelegramException(404, 'Not Found');
         return driveMessage(50);
       case td.SearchChatMessages():
         return const td.FoundChatMessages(
@@ -105,12 +111,28 @@ void main() {
     List<int> chats = const [testChatId],
     bool missing = false,
     bool owned = true,
+    bool noCard = false,
   }) async {
     // ignore: invalid_use_of_visible_for_testing_member
     SharedPreferences.setMockInitialValues({
       'last_user_id': 1,
       if (saved) 'drive_chat_1': testChatId,
       if (saved) 'drive_owned_$testChatId': owned,
+      if (saved)
+        'drive_snapshot': jsonEncode(
+          const DriveSession(
+            userId: 1,
+            chatId: testChatId,
+            channelTitle: 'Cloudora',
+            firstName: 'A',
+            lastName: '',
+            phoneNumber: '',
+            username: null,
+            isPremium: false,
+            role: DriveRole.viewer,
+          ).toJson(),
+        ),
+      if (saved) 'full_sync_$testChatId': DateTime.now().millisecondsSinceEpoch,
     });
     final shared = await SharedPreferences.getInstance();
     final db = AppDatabase(NativeDatabase.memory());
@@ -119,6 +141,7 @@ void main() {
       offline: offline,
       chats: chats,
       missing: missing,
+      noCard: noCard,
     );
     final container = ProviderContainer(
       overrides: [
@@ -142,6 +165,7 @@ void main() {
     expect(telegram.askedFor<td.CreateNewSupergroupChat>(), isEmpty);
     expect(telegram.askedFor<td.SetChatPhoto>(), isEmpty);
     expect(telegram.askedFor<td.PinChatMessage>(), isEmpty);
+    expect(telegram.askedFor<td.AddChatToList>(), isNotEmpty);
   });
 
   test('an admin with post, edit and delete is an editor', () async {
@@ -185,6 +209,23 @@ void main() {
     );
 
     expect(container.read(driveSetupProvider).sharedGone, isTrue);
+    expect(telegram.askedFor<td.CreateNewSupergroupChat>(), isEmpty);
+    // The pointer and the fact it was shared stay, for Check again; what
+    // this phone kept for it goes, so Home can't show it over the index.
+    expect(container.read(preferencesProvider).driveOwned(testChatId), isFalse);
+    expect(container.read(driveSnapshotProvider), isNull);
+  });
+
+  test('a shared drive whose drive message is gone is reported too', () async {
+    final (container, telegram) = await open(
+      memberSupergroup(),
+      saved: true,
+      owned: false,
+      noCard: true,
+    );
+
+    expect(container.read(driveSetupProvider).sharedGone, isTrue);
+    expect(container.read(driveSessionProvider), isNull);
     expect(telegram.askedFor<td.CreateNewSupergroupChat>(), isEmpty);
   });
 

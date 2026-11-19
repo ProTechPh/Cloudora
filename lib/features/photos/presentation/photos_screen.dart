@@ -9,6 +9,7 @@ import '../../../core/widgets/selection_bar.dart';
 import '../../backup/data/backup_controller.dart';
 import '../../backup/presentation/backup_card.dart';
 import '../../backup/presentation/duplicates_sheet.dart';
+import '../../drive/data/drive_session.dart';
 import '../../drive/data/drive_sync.dart';
 import '../../files/presentation/file_actions.dart';
 import '../../lock/data/app_lock.dart';
@@ -75,6 +76,7 @@ class _PhotosScreenState extends ConsumerState<PhotosScreen> {
     final backup = ref.watch(backupControllerProvider);
     final keptOut = ref.watch(keptOutSummaryProvider);
     final files = media.value;
+    final canEdit = ref.watch(driveCanEditProvider);
 
     return ListenableBuilder(
       listenable: _selection,
@@ -134,14 +136,16 @@ class _PhotosScreenState extends ConsumerState<PhotosScreen> {
                           value: _PhotosMenu.select,
                           child: Text('Select photos'),
                         ),
-                        const PopupMenuItem(
-                          value: _PhotosMenu.fromChat,
-                          child: Text('Save photos from a Telegram chat'),
-                        ),
-                        const PopupMenuItem(
-                          value: _PhotosMenu.duplicates,
-                          child: Text('Remove duplicate backups'),
-                        ),
+                        if (canEdit)
+                          const PopupMenuItem(
+                            value: _PhotosMenu.fromChat,
+                            child: Text('Save photos from a Telegram chat'),
+                          ),
+                        if (canEdit)
+                          const PopupMenuItem(
+                            value: _PhotosMenu.duplicates,
+                            child: Text('Remove duplicate backups'),
+                          ),
                         if (files != null && files.isNotEmpty)
                           PopupMenuItem(
                             value: _PhotosMenu.download,

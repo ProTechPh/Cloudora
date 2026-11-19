@@ -98,7 +98,7 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
                         ),
                       ],
                     ),
-                  ] else if (setup.choices.isNotEmpty)
+                  ] else if (setup.choices.isNotEmpty && setup.error == null)
                     DriveChoiceList(
                       options: setup.choices,
                       onPick: (option) => ref

@@ -178,7 +178,6 @@ class Preferences {
   /// index again leaves true.
   static const List<String> _channelKeys = [
     'drive_card_',
-    'drive_owned_',
     'index_copy_at_',
     'index_copy_print_',
   ];

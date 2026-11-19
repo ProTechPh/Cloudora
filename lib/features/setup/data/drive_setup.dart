@@ -132,6 +132,19 @@ class DriveSetup extends Notifier<SetupState> {
       }
       await _prefs.setDriveChatId(me.id, chat.id);
       await _prefs.setDriveOwned(chat.id, role == DriveRole.owner);
+      // A shared drive stays out of the way in Telegram's chat list too.
+      if (role != DriveRole.owner) {
+        try {
+          await _client.send<td.Ok>(
+            td.AddChatToList(
+              chatId: chat.id,
+              chatList: const td.ChatListArchive(),
+            ),
+          );
+        } catch (e) {
+          debugPrint('[DriveSetup] Could not archive the channel: $e');
+        }
+      }
 
       final session = DriveSession(
         userId: me.id,
@@ -186,7 +199,10 @@ class DriveSetup extends Notifier<SetupState> {
     if (saved == null) return null;
     final me = await _client.send<td.User>(const td.GetMe());
     if (me.id != saved.userId || _prefs.lastUserId != me.id) return null;
-    final channel = await _driveChannel(saved.chatId, requireMark: false);
+    final channel = await _driveChannel(
+      saved.chatId,
+      requireMark: !_prefs.driveOwned(saved.chatId),
+    );
     if (channel == null) return null;
     final session = DriveSession(
       userId: me.id,
@@ -238,8 +254,12 @@ class DriveSetup extends Notifier<SetupState> {
       }
     }
     final found = <DriveOption>[];
+    final current = ref.read(driveSessionProvider)?.chatId;
     for (final id in ids) {
-      final channel = await _driveChannel(id, requireMark: true);
+      if (id == current) continue;
+      // Membership and role only; the drive message itself is checked when
+      // one is chosen, so this list never walks every channel's history.
+      final channel = await _driveChannel(id, requireMark: false);
       if (channel != null) {
         found.add((
           chatId: id,
@@ -265,17 +285,24 @@ class DriveSetup extends Notifier<SetupState> {
 
   /// Makes a drive of this account's own, leaving someone else's alone.
   Future<void> createOwnDrive() async {
-    final me = await _client.send<td.User>(const td.GetMe());
-    final saved = _prefs.driveChatId(me.id);
-    if (saved != null) {
-      await _prefs.forgetChannel(saved);
-      await _prefs.clearDriveChatId(me.id);
-    }
-    _creatingOwn = true;
     try {
-      await run();
-    } finally {
-      _creatingOwn = false;
+      final me = await _client.send<td.User>(const td.GetMe());
+      final saved = _prefs.driveChatId(me.id);
+      if (saved != null) {
+        await _prefs.forgetChannel(saved);
+        await _prefs.clearDriveChatId(me.id);
+      }
+      _creatingOwn = true;
+      try {
+        await run();
+      } finally {
+        _creatingOwn = false;
+      }
+    } on TelegramException catch (e) {
+      state = state.copyWith(error: e.friendlyMessage, timedOut: e.code == 408);
+    } catch (e) {
+      debugPrint('[DriveSetup] $e');
+      state = state.copyWith(error: 'Something went wrong: $e');
     }
   }
 
@@ -306,13 +333,19 @@ class DriveSetup extends Notifier<SetupState> {
   Future<(td.Chat, bool, DriveRole)?> _locateOrCreate(int userId) async {
     final saved = _prefs.driveChatId(userId);
     if (saved != null) {
-      final channel = await _driveChannel(saved, requireMark: false);
+      // Someone else's drive counts only while its drive message is there:
+      // the owner deleting it makes the channel a channel, not a drive.
+      final owned = _prefs.driveOwned(saved);
+      final channel = await _driveChannel(saved, requireMark: !owned);
       if (channel != null) {
         return (await _brand(channel), false, channel.role);
       }
       // A drive someone shared that no longer answers is reported rather
-      // than quietly replaced by a new, empty one.
-      if (!_creatingOwn && !_prefs.driveOwned(saved)) {
+      // than quietly replaced by a new, empty one. What this phone kept for
+      // it goes, but the pointer and the fact it was shared stay, so Check
+      // again looks at the same channel.
+      if (!_creatingOwn && !owned) {
+        await ref.read(authControllerProvider.notifier).wipeDriveState();
         state = state.copyWith(step: SetupStep.done, sharedGone: true);
         return null;
       }

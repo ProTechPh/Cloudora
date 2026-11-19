@@ -1174,6 +1174,12 @@ class BackupController extends Notifier<BackupState> {
       state = state.copyWith(phase: BackupPhase.waitingForDrive);
       return;
     }
+    // A drive this phone may only read takes no pass: nothing would go up,
+    // and the app-closed job would try in the background too.
+    if (!ref.read(driveCanEditProvider)) {
+      state = state.copyWith(phase: BackupPhase.off, clearCurrent: true);
+      return;
+    }
 
     final permission = await PhotoManager.getPermissionState(
       requestOption: permissionOption,

@@ -1993,6 +1993,7 @@ abstract final class FileActions {
     DriveFolder folder,
   ) {
     final canEdit = ref.read(driveCanEditProvider);
+    final isOwner = ref.read(visibleSessionProvider)?.isOwner ?? true;
     return showModalBottomSheet<void>(
       context: context,
       useRootNavigator: true,
@@ -2071,7 +2072,7 @@ abstract final class FileActions {
                   ),
                   // A folder inside a private one is private with it, and
                   // goes in or out with that folder.
-                  if (folder.private || !folder.inPrivate)
+                  if (isOwner && (folder.private || !folder.inPrivate))
                     _SheetAction(
                       icon: folder.private
                           ? Icons.lock_open_outlined

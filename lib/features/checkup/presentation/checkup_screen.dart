@@ -154,7 +154,9 @@ class CheckupScreen extends ConsumerWidget {
               finding.severity,
               'Messages in your drive delete themselves after '
               '${Formatters.period(Duration(seconds: finding.autoDeleteSeconds))}',
-              detail: 'Telegram\'s auto-delete timer is on for this channel.',
+              detail: isOwner
+                  ? 'Telegram\'s auto-delete timer is on for this channel.'
+                  : 'Only the owner can change this.',
               fixes: isOwner ? [fix('Turn off', checkup.turnOffAutoDelete)] : const [],
             ),
           ];
@@ -164,7 +166,9 @@ class CheckupScreen extends ConsumerWidget {
             row(
               finding.severity,
               'Your drive channel is public',
-              detail: 'Anyone with t.me/$name can see your files.',
+              detail: isOwner
+                  ? 'Anyone with t.me/$name can see your files.'
+                  : 'Only the owner can change this.',
               fixes: [
                 if (isOwner)
                   if (finding.supergroupId case final id?)

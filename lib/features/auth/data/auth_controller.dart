@@ -234,10 +234,11 @@ class AuthController extends Notifier<AuthUiState> {
   /// back the access to each, so no grant is left that nothing uses. When
   /// the phone's caches were last trimmed is forgotten as well,
   /// so the next drive to open trims them once straight away. The drive
-  /// leaves Android's file picker, and the picker's bridge to the stream
+  /// leaves Android's file picker, and the picker's bridge to the stream.
+  ///
   /// Everything this phone keeps about the drive that is open, without the
-  /// account itself. Used when another drive takes its place, so the old
-  /// drive's photos never look backed up and its uploads never follow.
+  /// account itself, is [wipeDriveState]'s: the old drive's photos never
+  /// look backed up and its uploads never follow.
   Future<void> wipeDriveState() async {
     // Read up front: a wipe can outlive the provider it started from.
     final prefs = ref.read(preferencesProvider);
@@ -270,6 +271,7 @@ class AuthController extends Notifier<AuthUiState> {
     await deletePdfBlockCache();
   }
 
+  /// Forgets the account too, after [wipeDriveState].
   Future<void> wipeDeviceState() async {
     // Read up front too: the wipe outlives the controller by design.
     final prefs = ref.read(preferencesProvider);

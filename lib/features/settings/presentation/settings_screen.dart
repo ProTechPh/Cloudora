@@ -202,6 +202,8 @@ class SettingsScreen extends ConsumerWidget {
                 subtitle: Text(
                   session == null || session.isOwner
                       ? 'The private channel that holds your files'
+                      : session.role == DriveRole.viewer
+                      ? '${driveRoleLine(session.role)}. Ask the owner to make you an editor.'
                       : driveRoleLine(session.role),
                 ),
                 trailing: Icon(Icons.open_in_new_rounded, size: 20, color: colors.text3),

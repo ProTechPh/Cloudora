@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/widgets/selection_bar.dart';
+import '../../drive/data/drive_session.dart';
 import '../../drive/domain/drive_models.dart';
 import '../../files/presentation/file_actions.dart';
 import 'album_actions.dart';
@@ -40,6 +41,7 @@ Widget mediaSelectionActions(
 }) {
   final picked = selection.pick(files);
   final none = picked.isEmpty;
+  final canEdit = ref.watch(driveCanEditProvider);
   final allStarred = !none && picked.every((f) => f.starred);
   final allPicked = !none && picked.length == files.length;
 
@@ -52,11 +54,12 @@ Widget mediaSelectionActions(
 
   return SelectionActionBar(
     actions: [
-      SelectionAction(
-        icon: Icons.library_add_outlined,
-        label: 'Album',
-        onTap: unlessNone(() => AlbumActions.addTo(context, ref, picked)),
-      ),
+      if (canEdit)
+        SelectionAction(
+          icon: Icons.library_add_outlined,
+          label: 'Album',
+          onTap: unlessNone(() => AlbumActions.addTo(context, ref, picked)),
+        ),
       SelectionAction(
         icon: Icons.send_outlined,
         label: 'Send',
@@ -69,19 +72,20 @@ Widget mediaSelectionActions(
           () => FileActions.saveToDevice(context, ref, files: picked, preferGallery: true),
         ),
       ),
-      SelectionAction(
-        icon: Icons.delete_outline_rounded,
-        label: 'Trash',
-        onTap: unlessNone(() => FileActions.delete(context, ref, files: picked)),
-      ),
+      if (canEdit)
+        SelectionAction(
+          icon: Icons.delete_outline_rounded,
+          label: 'Trash',
+          onTap: unlessNone(() => FileActions.delete(context, ref, files: picked)),
+        ),
     ],
     more: [
-      if (!none)
+      if (!none && canEdit)
         PopupMenuItem(
           value: _More.star,
           child: Text(allStarred ? 'Remove from Starred' : 'Add to Starred'),
         ),
-      if (!none && albumId != null)
+      if (!none && canEdit && albumId != null)
         const PopupMenuItem(value: _More.removeFromAlbum, child: Text('Remove from album')),
       if (allPicked)
         const PopupMenuItem(value: _More.deselectAll, child: Text('Deselect all'))
