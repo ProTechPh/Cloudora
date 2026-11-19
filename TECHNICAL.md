@@ -414,6 +414,39 @@ value goes back onto the line exactly as it came.
   in, so browsing the drive doesn't show the account as online to its
   contacts.
 
+## Shared drive
+
+A drive can be shared: one channel, several Telegram accounts, each on its
+own phone. Cloudora invents no roles; it reads Telegram's:
+
+- **Owner** — the account that created the channel.
+- **Editor** — an admin with Post, edit and delete rights. Everything with
+  files and folders that the owner does, except Private.
+- **Viewer** — an admin without those rights, or a member. Browse, open,
+  play, download, keep offline, send to a chat. Nothing writes.
+
+The owner shares the channel's invite link from Settings · Drive channel ·
+Invite people. The other person joins in Telegram, then opens Cloudora;
+Setup finds the channel by title and by scanning the chat lists, and opens
+it. Joining happens in Telegram, never inside the app: Telegram already
+owns links, join requests and two-step verification.
+
+Settings · Drive channel · Switch drive opens another channel this account
+can use. Everything this phone kept for the old drive goes first — index,
+backup marks, waiting transfers (cancelled), offline copies, watched
+folders, the takeout ledger — so nothing of it shows in the new one. The
+choice is remembered on that phone, not on the account. A shared drive
+that no longer answers is reported rather than replaced by a new, empty
+one.
+
+Only the owner writes the copy of the index, so several phones never race
+one copy message and its pointer. A viewer's phone writes nothing at all:
+no index copy, trash purge, forward filing, previews or backup. Private is
+the owner's alone, and its sheet says what it always was: it hides folders
+in Cloudora only, while Telegram still shows their files to every member.
+Photo backup from several phones lands in one timeline; the name-and-size
+check keeps a photo from going up twice.
+
 ## Transfers
 
 - A queue that survives restarts, with live speed and ETA, pause, resume,
@@ -798,6 +831,17 @@ previews are in the channel, so every phone shows them.
 
 - Private hides folders in Cloudora only. Telegram shows their files in
   the channel as it shows any other.
+- A shared drive is joined in Telegram, so being invited while already
+  using Cloudora changes nothing on screen until Settings · Drive channel
+  is opened. The invite is the instruction.
+- Which drive a phone shows is remembered on that phone, not on the
+  account. A reinstall or another phone opens the account's own drive
+  again, and the shared one is one Switch drive away.
+- A shared drive's switch is per phone, and an editor can't change the
+  channel's public link or auto-delete timer; those are the owner's.
+- If the owner's Telegram account goes, the drive goes with it.
+- Two phones can have different photos with the same name and size; backup
+  judges them the same and sends one.
 - Split files appear in Telegram as numbered parts, and only Cloudora
   joins them back.
 - A video the phone's player can't decode, such as some MKV files, keeps

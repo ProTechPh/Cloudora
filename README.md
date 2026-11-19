@@ -26,6 +26,8 @@ your files stay in Telegram.
 - **Brings over Google Photos,** with dates and albums.
 - **Works like a file manager:** folders, stars, albums, and a trash you
   can undo.
+- **Shares the drive with your family.** Everyone signs in with their own
+  Telegram and sees the same files; you decide who can add and change them.
 - **Finds things** by name, by date, or by the words inside a document.
 - **Plays videos and music and opens PDFs** without downloading them
   first.
