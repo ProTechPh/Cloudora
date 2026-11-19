@@ -1051,6 +1051,10 @@ abstract final class FileActions {
     WidgetRef ref, {
     String? folderId,
   }) {
+    if (!ref.read(driveCanEditProvider)) {
+      showSnack(context, readOnlyNotice);
+      return Future<void>.value();
+    }
     return showModalBottomSheet<void>(
       context: context,
       useRootNavigator: true,

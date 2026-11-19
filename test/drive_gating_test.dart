@@ -85,6 +85,44 @@ void main() {
     expect(find.text('Move to Trash'), findsOneWidget);
   });
 
+  Future<void> pumpNew(WidgetTester tester, DriveRole role) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [driveSessionProvider.overrideWith(() => _Session(role))],
+        child: MaterialApp(
+          theme: AppTheme.light(),
+          home: Scaffold(
+            body: Consumer(
+              builder: (context, ref, _) => Center(
+                child: TextButton(
+                  onPressed: () => FileActions.showCreateSheet(context, ref),
+                  child: const Text('new'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('new'));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('a viewer\'s New button says the drive is read-only', (
+    tester,
+  ) async {
+    await pumpNew(tester, DriveRole.viewer);
+
+    expect(find.textContaining('read-only for you'), findsOneWidget);
+    expect(find.text('Upload files'), findsNothing);
+  });
+
+  testWidgets('an editor gets the New sheet', (tester) async {
+    await pumpNew(tester, DriveRole.editor);
+
+    expect(find.text('Upload files'), findsOneWidget);
+  });
+
   test('a refusal by rights is named, not shown as a raw code', () {
     expect(
       const TelegramException(403, 'CHAT_ADMIN_REQUIRED').needsRights,
