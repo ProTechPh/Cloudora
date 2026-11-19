@@ -24,7 +24,9 @@ class _Telegram extends FakeTelegram {
     this.missing = false,
   });
 
-  final td.Supergroup group;
+  /// The account's status in the channel, which a test may change as
+  /// Telegram would.
+  td.Supergroup group;
 
   /// Every request fails, as on a phone with no connection.
   final bool offline;
@@ -184,5 +186,15 @@ void main() {
 
     expect(container.read(driveSetupProvider).sharedGone, isTrue);
     expect(telegram.askedFor<td.CreateNewSupergroupChat>(), isEmpty);
+  });
+
+  test('a role read again follows Telegram', () async {
+    final (container, telegram) = await open(adminSupergroup());
+
+    expect(container.read(driveSessionProvider)!.role, DriveRole.editor);
+    telegram.group = memberSupergroup();
+    await container.read(driveSetupProvider.notifier).refreshRole();
+
+    expect(container.read(driveSessionProvider)!.role, DriveRole.viewer);
   });
 }

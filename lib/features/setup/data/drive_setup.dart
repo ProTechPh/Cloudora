@@ -279,6 +279,30 @@ class DriveSetup extends Notifier<SetupState> {
     }
   }
 
+  /// Reads this account's role again, for when Telegram refused a write.
+  /// A failure leaves the session as it was.
+  Future<void> refreshRole() async {
+    final session = ref.read(driveSessionProvider);
+    if (session == null) return;
+    try {
+      final chat = await _client.send<td.Chat>(
+        td.GetChat(chatId: session.chatId),
+      );
+      if (chat.type case td.ChatTypeSupergroup(supergroupId: final id)) {
+        final group = await _client.send<td.Supergroup>(
+          td.GetSupergroup(supergroupId: id),
+        );
+        final role = roleOf(group);
+        if (role == null || role == session.role) return;
+        final next = session.withRole(role);
+        ref.read(driveSessionProvider.notifier).open(next);
+        await ref.read(driveSnapshotProvider.notifier).save(next);
+      }
+    } catch (e) {
+      debugPrint('[DriveSetup] Could not read the role again: $e');
+    }
+  }
+
   Future<(td.Chat, bool, DriveRole)?> _locateOrCreate(int userId) async {
     final saved = _prefs.driveChatId(userId);
     if (saved != null) {
