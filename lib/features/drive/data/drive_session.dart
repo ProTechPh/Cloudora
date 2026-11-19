@@ -2,8 +2,52 @@ import 'dart:convert';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:handy_tdlib/api.dart' as td;
 
 import '../../../infrastructure/storage/preferences.dart';
+import '../../../infrastructure/telegram/telegram_client.dart';
+
+/// What this account may do in the drive, read from Telegram's own
+/// membership and admin rights rather than kept by Cloudora.
+enum DriveRole {
+  owner,
+  editor,
+  viewer;
+
+  bool get isOwner => this == DriveRole.owner;
+
+  /// A viewer writes nothing: no file, folder, album or backup.
+  bool get canEdit => this != DriveRole.viewer;
+}
+
+/// Something the app writes into the channel. Only an owner writes the
+/// index copy; a viewer writes nothing at all.
+enum DriveWrite { indexCopy, trashPurge, forwardFiling, previews, backup }
+
+bool mayWrite(DriveRole role, DriveWrite write) => switch (role) {
+  DriveRole.owner => true,
+  DriveRole.editor => write != DriveWrite.indexCopy,
+  DriveRole.viewer => false,
+};
+
+/// The role this account has in [group], read from Telegram's own status
+/// and admin rights. Null when the account is no longer in it.
+DriveRole? roleOf(td.Supergroup group) => switch (group.status) {
+  td.ChatMemberStatusCreator() => DriveRole.owner,
+  td.ChatMemberStatusAdministrator(:final rights)
+      when rights.canPostMessages &&
+          rights.canEditMessages &&
+          rights.canDeleteMessages =>
+    DriveRole.editor,
+  td.ChatMemberStatusAdministrator() ||
+  td.ChatMemberStatusMember() => DriveRole.viewer,
+  _ => null,
+};
+
+/// What a person is told when they try to write to a drive they may only
+/// read.
+const readOnlyNotice =
+    'This drive is read-only for you. Ask the owner to make you an editor.';
 
 /// The signed-in account and the channel its drive lives in. Null until
 /// setup has found or created the channel.
@@ -18,6 +62,7 @@ class DriveSession {
     required this.phoneNumber,
     required this.username,
     required this.isPremium,
+    this.role = DriveRole.owner,
   });
 
   /// A session saved with [toJson], whose phone number is not known.
@@ -30,6 +75,12 @@ class DriveSession {
     phoneNumber: '',
     username: json['username'] as String?,
     isPremium: json['isPremium']! as bool,
+    // A snapshot written before roles existed was always the owner's.
+    role: switch (json['role']) {
+      'editor' => DriveRole.editor,
+      'viewer' => DriveRole.viewer,
+      _ => DriveRole.owner,
+    },
   );
 
   final int userId;
@@ -40,11 +91,28 @@ class DriveSession {
   final String phoneNumber;
   final String? username;
   final bool isPremium;
+  final DriveRole role;
+
+  DriveSession withRole(DriveRole role) => DriveSession(
+    userId: userId,
+    chatId: chatId,
+    channelTitle: channelTitle,
+    firstName: firstName,
+    lastName: lastName,
+    phoneNumber: phoneNumber,
+    username: username,
+    isPremium: isPremium,
+    role: role,
+  );
 
   String get displayName => [firstName, lastName]
       .where((s) => s.trim().isNotEmpty)
       .join(' ')
       .trim();
+
+  bool get isOwner => role.isOwner;
+
+  bool get canEdit => role.canEdit;
 
   String get initials {
     final parts = displayName.split(' ').where((p) => p.isNotEmpty).toList();
@@ -65,6 +133,7 @@ class DriveSession {
     'lastName': lastName,
     'username': username,
     'isPremium': isPremium,
+    'role': role.name,
   };
 }
 
@@ -137,3 +206,29 @@ final driveSnapshotProvider =
 final visibleSessionProvider = Provider<DriveSession?>(
   (ref) => ref.watch(driveSessionProvider) ?? ref.watch(driveSnapshotProvider),
 );
+
+/// Whether this drive may be written to. Before a drive is open nothing is
+/// hidden; the shell isn't shown then.
+final driveCanEditProvider = Provider<bool>(
+  (ref) => ref.watch(visibleSessionProvider)?.canEdit ?? true,
+);
+
+/// Whether the drive channel has more than one member, which makes
+/// Private's promise a weaker one. False while unknown.
+final driveIsSharedProvider = FutureProvider<bool>((ref) async {
+  final session = ref.watch(visibleSessionProvider);
+  if (session == null) return false;
+  try {
+    final client = ref.read(telegramClientProvider);
+    final chat = await client.send<td.Chat>(td.GetChat(chatId: session.chatId));
+    if (chat.type case td.ChatTypeSupergroup(supergroupId: final id)) {
+      final group = await client.send<td.Supergroup>(
+        td.GetSupergroup(supergroupId: id),
+      );
+      return group.memberCount > 1;
+    }
+  } catch (e) {
+    debugPrint('[DriveSession] Could not read the member count: $e');
+  }
+  return false;
+});

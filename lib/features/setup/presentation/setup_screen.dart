@@ -8,6 +8,7 @@ import '../../auth/data/auth_controller.dart';
 import '../../drive/data/drive_sync.dart';
 import '../../network/presentation/connection_notice.dart';
 import '../data/drive_setup.dart';
+import 'drive_sheets.dart';
 
 /// Shown between sign-in and the drive. For a returning user it is a blink;
 /// the first time on a device it narrates finding (or creating) the channel
@@ -54,37 +55,27 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
                   const BrandMark(size: 48),
                   const SizedBox(height: 24),
                   Text(
-                    setup.error != null
+                    setup.sharedGone
+                        ? 'This shared drive isn\'t available anymore'
+                        : setup.choices.isNotEmpty
+                        ? 'Choose your drive'
+                        : setup.error != null
                         ? 'We hit a snag'
                         : setup.createdChannel
                         ? 'Creating your drive'
                         : 'Opening your drive',
+                    textAlign: TextAlign.center,
                     style: theme.textTheme.headlineSmall,
                   ),
                   const SizedBox(height: 24),
-                  for (final (step, label) in steps)
-                    _StepRow(
-                      label: step == SetupStep.indexing && scanned > 0
-                          ? '$label · ${Formatters.count(scanned, 'item')}'
-                          : label,
-                      state: setup.error != null && setup.step == step
-                          ? _RowState.failed
-                          : setup.step.index > step.index
-                          ? _RowState.done
-                          : setup.step == step
-                          ? _RowState.active
-                          : _RowState.waiting,
-                    ),
-                  ConnectionNotice(
-                    margin: const EdgeInsets.only(top: Space.xxl),
-                    timedOut: setup.timedOut,
-                  ),
-                  if (setup.error != null) ...[
-                    const SizedBox(height: 16),
+                  if (setup.sharedGone) ...[
                     Text(
-                      setup.error!,
+                      'The owner may have removed you, or the channel is '
+                      'gone. Your files are still in Telegram.',
                       textAlign: TextAlign.center,
-                      style: theme.textTheme.bodyMedium?.copyWith(color: scheme.error),
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
                     const SizedBox(height: 20),
                     Row(
@@ -92,20 +83,76 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
                         Expanded(
                           child: OutlinedButton(
                             onPressed: () =>
-                                ref.read(authControllerProvider.notifier).signOut(),
-                            child: const Text('Sign out'),
+                                ref.read(driveSetupProvider.notifier).run(),
+                            child: const Text('Check again'),
                           ),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
                           child: FilledButton(
-                            onPressed: () =>
-                                ref.read(driveSetupProvider.notifier).run(),
-                            child: const Text('Retry'),
+                            onPressed: () => ref
+                                .read(driveSetupProvider.notifier)
+                                .createOwnDrive(),
+                            child: const Text('Create my own drive'),
                           ),
                         ),
                       ],
                     ),
+                  ] else if (setup.choices.isNotEmpty && setup.error == null)
+                    DriveChoiceList(
+                      options: setup.choices,
+                      onPick: (option) => ref
+                          .read(driveSetupProvider.notifier)
+                          .openChosen(option.chatId),
+                    )
+                  else ...[
+                    for (final (step, label) in steps)
+                      _StepRow(
+                        label: step == SetupStep.indexing && scanned > 0
+                            ? '$label · ${Formatters.count(scanned, 'item')}'
+                            : label,
+                        state: setup.error != null && setup.step == step
+                            ? _RowState.failed
+                            : setup.step.index > step.index
+                            ? _RowState.done
+                            : setup.step == step
+                            ? _RowState.active
+                            : _RowState.waiting,
+                      ),
+                    ConnectionNotice(
+                      margin: const EdgeInsets.only(top: Space.xxl),
+                      timedOut: setup.timedOut,
+                    ),
+                    if (setup.error != null) ...[
+                      const SizedBox(height: 16),
+                      Text(
+                        setup.error!,
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: scheme.error,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () =>
+                                  ref.read(authControllerProvider.notifier).signOut(),
+                              child: const Text('Sign out'),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: FilledButton(
+                              onPressed: () =>
+                                  ref.read(driveSetupProvider.notifier).run(),
+                              child: const Text('Retry'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ],
               ),

@@ -13,6 +13,7 @@ import '../../../infrastructure/network/network_status.dart';
 import '../../../infrastructure/storage/preferences.dart';
 import '../../../infrastructure/telegram/message_number.dart';
 import '../../../infrastructure/telegram/telegram_client.dart';
+import 'drive_session.dart';
 import '../domain/manifest.dart';
 import 'channel_messenger.dart';
 
@@ -64,6 +65,12 @@ class IndexCopies {
   /// Writes a copy of the index into [chatId] if one is due. True when it
   /// did. It never throws: the copy only saves time.
   Future<bool> writeIfDue(int chatId) async {
+    // Only the owner writes the copy, so several phones never race one
+    // message and its pointer. A viewer writes nothing at all.
+    final role = _ref.read(driveSessionProvider)?.role;
+    if (role != null && !mayWrite(role, DriveWrite.indexCopy)) {
+      return _skip('this phone may only read the drive');
+    }
     File? file;
     try {
       final cardId = _prefs.driveCardId(chatId);

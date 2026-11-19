@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/widgets/selection_bar.dart';
+import '../../drive/data/drive_session.dart';
 import '../../drive/domain/drive_models.dart';
 import 'file_actions.dart';
 
@@ -23,6 +24,7 @@ Widget fileSelectionActions(
   bool allSelected = false,
 }) {
   final none = files.isEmpty && folders.isEmpty;
+  final canEdit = ref.watch(driveCanEditProvider);
   final allStarred =
       !none && files.every((f) => f.starred) && folders.every((f) => f.starred);
 
@@ -54,24 +56,31 @@ Widget fileSelectionActions(
           () => FileActions.sendToChats(context, ref, files, folders: folders),
         ),
       ),
-      SelectionAction(
-        icon: Icons.drive_file_move_outline,
-        label: 'Move',
-        onTap: unlessNone(
-          () => FileActions.move(context, ref, files: files, folders: folders),
+      if (canEdit) ...[
+        SelectionAction(
+          icon: Icons.drive_file_move_outline,
+          label: 'Move',
+          onTap: unlessNone(
+            () =>
+                FileActions.move(context, ref, files: files, folders: folders),
+          ),
         ),
-      ),
-      SelectionAction(
-        icon: Icons.delete_outline_rounded,
-        label: 'Trash',
-        onTap: unlessNone(
-          () =>
-              FileActions.delete(context, ref, files: files, folders: folders),
+        SelectionAction(
+          icon: Icons.delete_outline_rounded,
+          label: 'Trash',
+          onTap: unlessNone(
+            () => FileActions.delete(
+              context,
+              ref,
+              files: files,
+              folders: folders,
+            ),
+          ),
         ),
-      ),
+      ],
     ],
     more: [
-      if (!none)
+      if (!none && canEdit)
         PopupMenuItem(
           value: _More.star,
           child: Text(allStarred ? 'Remove from Starred' : 'Add to Starred'),

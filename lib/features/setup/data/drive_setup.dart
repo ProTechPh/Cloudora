@@ -18,8 +18,9 @@ import '../../drive/data/drive_session.dart';
 import '../../drive/data/drive_sync.dart';
 import '../../drive/data/index_copies.dart';
 import '../../drive/domain/manifest.dart';
+import '../../transfers/data/transfer_queue.dart';
 
-enum SetupStep { account, channel, indexing, done }
+enum SetupStep { account, channel, indexing, choose, done }
 
 @immutable
 class SetupState {
@@ -28,6 +29,8 @@ class SetupState {
     this.createdChannel = false,
     this.error,
     this.timedOut = false,
+    this.choices = const [],
+    this.sharedGone = false,
   });
 
   final SetupStep step;
@@ -40,17 +43,29 @@ class SetupState {
   /// that blocks Telegram is all there is to see.
   final bool timedOut;
 
+  /// The drives found when there is more than one and no own drive, for
+  /// the person to pick from.
+  final List<DriveOption> choices;
+
+  /// The shared drive this phone last opened is gone, or no longer this
+  /// account's to open. Nothing is created in its place.
+  final bool sharedGone;
+
   SetupState copyWith({
     SetupStep? step,
     bool? createdChannel,
     String? error,
     bool? timedOut,
     bool clearError = false,
+    List<DriveOption>? choices,
+    bool? sharedGone,
   }) => SetupState(
     step: step ?? this.step,
     createdChannel: createdChannel ?? this.createdChannel,
     error: clearError ? null : (error ?? this.error),
     timedOut: clearError ? false : (timedOut ?? this.timedOut),
+    choices: choices ?? this.choices,
+    sharedGone: sharedGone ?? this.sharedGone,
   );
 }
 
@@ -74,6 +89,10 @@ class DriveSetup extends Notifier<SetupState> {
       'so deleting or editing these messages changes it.';
 
   Future<void>? _running;
+
+  /// Set while the person asks for a drive of their own, so the search
+  /// doesn't hand them someone else's instead.
+  bool _creatingOwn = false;
 
   TelegramClient get _client => ref.read(telegramClientProvider);
   Preferences get _prefs => ref.read(preferencesProvider);
@@ -100,7 +119,9 @@ class DriveSetup extends Notifier<SetupState> {
       // no longer matches it.
       final snapshot = ref.read(driveSnapshotProvider);
       state = state.copyWith(step: SetupStep.channel);
-      final (chat, created) = await _locateOrCreate(me.id);
+      final located = await _locateOrCreate(me.id);
+      if (located == null) return;
+      final (chat, created, role) = located;
       if (snapshot != null && chat.id != snapshot.chatId) {
         // The drive channel was replaced. The index read from the old one
         // goes before the new one is read in full, so the two never mix,
@@ -110,6 +131,20 @@ class DriveSetup extends Notifier<SetupState> {
         await _prefs.forgetChannel(snapshot.chatId);
       }
       await _prefs.setDriveChatId(me.id, chat.id);
+      await _prefs.setDriveOwned(chat.id, role == DriveRole.owner);
+      // A shared drive stays out of the way in Telegram's chat list too.
+      if (role != DriveRole.owner) {
+        try {
+          await _client.send<td.Ok>(
+            td.AddChatToList(
+              chatId: chat.id,
+              chatList: const td.ChatListArchive(),
+            ),
+          );
+        } catch (e) {
+          debugPrint('[DriveSetup] Could not archive the channel: $e');
+        }
+      }
 
       final session = DriveSession(
         userId: me.id,
@@ -120,6 +155,7 @@ class DriveSetup extends Notifier<SetupState> {
         phoneNumber: me.phoneNumber,
         username: me.usernames?.activeUsernames.firstOrNull,
         isPremium: me.isPremium,
+        role: role,
       );
       final sync = ref.read(driveSyncProvider.notifier);
       ref.read(driveSessionProvider.notifier).open(session);
@@ -163,7 +199,10 @@ class DriveSetup extends Notifier<SetupState> {
     if (saved == null) return null;
     final me = await _client.send<td.User>(const td.GetMe());
     if (me.id != saved.userId || _prefs.lastUserId != me.id) return null;
-    final channel = await _ownedDriveChannel(saved.chatId, requireMark: false);
+    final channel = await _driveChannel(
+      saved.chatId,
+      requireMark: !_prefs.driveOwned(saved.chatId),
+    );
     if (channel == null) return null;
     final session = DriveSession(
       userId: me.id,
@@ -174,21 +213,169 @@ class DriveSetup extends Notifier<SetupState> {
       phoneNumber: me.phoneNumber,
       username: me.usernames?.activeUsernames.firstOrNull,
       isPremium: me.isPremium,
+      role: channel.role,
     );
     ref.read(driveSessionProvider.notifier).open(session);
     await ref.read(driveSyncProvider.notifier).refresh();
     return session;
   }
 
-  Future<(td.Chat, bool)> _locateOrCreate(int userId) async {
+  /// Opens another drive on this phone: another channel this account can
+  /// use, perhaps one someone else shared. Everything this phone kept for
+  /// the old drive goes first, so nothing of it shows in the new one.
+  Future<void> switchTo(int chatId) async {
+    final me = await _client.send<td.User>(const td.GetMe());
+    if (await _driveChannel(chatId, requireMark: true) == null) {
+      throw const TelegramException(404, 'DRIVE_NOT_FOUND');
+    }
+    await ref.read(transferQueueProvider.notifier).cancelAll();
+    await ref.read(authControllerProvider.notifier).wipeDriveState();
+    await _prefs.forgetChannel(chatId);
+    await _prefs.setDriveChatId(me.id, chatId);
+    await run();
+  }
+
+  /// Every channel this account can open that holds a drive, with the role
+  /// it has there. Asked only when someone opens the switch list, since it
+  /// looks through the account's channels.
+  Future<List<DriveOption>> switchableDrives() async {
+    await _loadChatList(const td.ChatListMain());
+    await _loadChatList(const td.ChatListArchive());
+    final ids = <int>{};
+    for (final list in const [td.ChatListMain(), td.ChatListArchive()]) {
+      try {
+        ids.addAll(
+          (await _client.send<td.Chats>(
+            td.GetChats(chatList: list, limit: 200),
+          )).chatIds,
+        );
+      } catch (e) {
+        debugPrint('[DriveSetup] Listing drives: $e');
+      }
+    }
+    final found = <DriveOption>[];
+    final current = ref.read(driveSessionProvider)?.chatId;
+    for (final id in ids) {
+      if (id == current) continue;
+      // Membership and role only; the drive message itself is checked when
+      // one is chosen, so this list never walks every channel's history.
+      final channel = await _driveChannel(id, requireMark: false);
+      if (channel != null) {
+        found.add((
+          chatId: id,
+          title: channel.chat.title,
+          role: channel.role,
+        ));
+      }
+    }
+    return found;
+  }
+
+  /// Opens one of the drives Setup offered when it found several.
+  Future<void> openChosen(int chatId) async {
+    try {
+      await switchTo(chatId);
+    } on TelegramException catch (e) {
+      state = state.copyWith(error: e.friendlyMessage, timedOut: e.code == 408);
+    } catch (e) {
+      debugPrint('[DriveSetup] $e');
+      state = state.copyWith(error: 'Something went wrong: $e');
+    }
+  }
+
+  /// Makes a drive of this account's own, leaving someone else's alone.
+  Future<void> createOwnDrive() async {
+    try {
+      final me = await _client.send<td.User>(const td.GetMe());
+      final saved = _prefs.driveChatId(me.id);
+      if (saved != null) {
+        await _prefs.forgetChannel(saved);
+        await _prefs.clearDriveChatId(me.id);
+      }
+      _creatingOwn = true;
+      try {
+        await run();
+      } finally {
+        _creatingOwn = false;
+      }
+    } on TelegramException catch (e) {
+      state = state.copyWith(error: e.friendlyMessage, timedOut: e.code == 408);
+    } catch (e) {
+      debugPrint('[DriveSetup] $e');
+      state = state.copyWith(error: 'Something went wrong: $e');
+    }
+  }
+
+  /// Reads this account's role again, for when Telegram refused a write.
+  /// A failure leaves the session as it was.
+  Future<void> refreshRole() async {
+    final session = ref.read(driveSessionProvider);
+    if (session == null) return;
+    try {
+      final chat = await _client.send<td.Chat>(
+        td.GetChat(chatId: session.chatId),
+      );
+      if (chat.type case td.ChatTypeSupergroup(supergroupId: final id)) {
+        final group = await _client.send<td.Supergroup>(
+          td.GetSupergroup(supergroupId: id),
+        );
+        final role = roleOf(group);
+        if (role == null || role == session.role) return;
+        final next = session.withRole(role);
+        ref.read(driveSessionProvider.notifier).open(next);
+        await ref.read(driveSnapshotProvider.notifier).save(next);
+      }
+    } catch (e) {
+      debugPrint('[DriveSetup] Could not read the role again: $e');
+    }
+  }
+
+  Future<(td.Chat, bool, DriveRole)?> _locateOrCreate(int userId) async {
     final saved = _prefs.driveChatId(userId);
     if (saved != null) {
-      final channel = await _ownedDriveChannel(saved, requireMark: false);
-      if (channel != null) return (await _brand(channel), false);
+      // Someone else's drive counts only while its drive message is there:
+      // the owner deleting it makes the channel a channel, not a drive.
+      final owned = _prefs.driveOwned(saved);
+      final channel = await _driveChannel(saved, requireMark: !owned);
+      if (channel != null) {
+        return (await _brand(channel), false, channel.role);
+      }
+      // A drive someone shared that no longer answers is reported rather
+      // than quietly replaced by a new, empty one. What this phone kept for
+      // it goes, but the pointer and the fact it was shared stay, so Check
+      // again looks at the same channel.
+      if (!_creatingOwn && !owned) {
+        await ref.read(authControllerProvider.notifier).wipeDriveState();
+        state = state.copyWith(step: SetupStep.done, sharedGone: true);
+        return null;
+      }
     }
 
-    final found = await _search();
-    if (found != null) return (await _brand(found), false);
+    if (!_creatingOwn) {
+      final found = await _searchAll();
+      final owned = found
+          .where((channel) => channel.role == DriveRole.owner)
+          .firstOrNull;
+      if (owned != null) return (await _brand(owned), false, owned.role);
+      if (found.length == 1) {
+        final one = found.single;
+        return (await _brand(one), false, one.role);
+      }
+      if (found.length > 1) {
+        state = state.copyWith(
+          step: SetupStep.choose,
+          choices: [
+            for (final channel in found)
+              (
+                chatId: channel.chat.id,
+                title: channel.chat.title,
+                role: channel.role,
+              ),
+          ],
+        );
+        return null;
+      }
+    }
 
     final chat = await _client.send<td.Chat>(
       const td.CreateNewSupergroupChat(
@@ -208,7 +395,11 @@ class DriveSetup extends Notifier<SetupState> {
     } catch (e) {
       debugPrint('[DriveSetup] Could not archive the channel: $e');
     }
-    return (await _brand((chat: chat, card: null)), true);
+    return (
+      await _brand((chat: chat, card: null, role: DriveRole.owner)),
+      true,
+      DriveRole.owner,
+    );
   }
 
   /// Brings a channel in line with how Cloudora presents it: the app icon as
@@ -216,6 +407,8 @@ class DriveSetup extends Notifier<SetupState> {
   /// description are the owner's to change. Best-effort — none of this is
   /// needed for the drive to work.
   Future<td.Chat> _brand(_DriveChannel channel) async {
+    // Someone else's drive keeps its look: its owner decides those.
+    if (channel.role != DriveRole.owner) return channel.chat;
     var chat = channel.chat;
     try {
       if (chat.photo == null) {
@@ -346,35 +539,41 @@ class DriveSetup extends Notifier<SetupState> {
     return file.path;
   }
 
-  /// Finds an existing drive — the reinstall and new-phone path.
+  /// Finds every drive this account can open — the reinstall, new-phone and
+  /// shared-drive path.
   ///
   /// A fresh sign-in knows none of the account's chats yet, and the drive
   /// sits in the Archive, so a title search alone can miss it. If it does,
-  /// the chat lists are loaded and every archived channel this account owns
-  /// is checked for the drive message — which also finds a drive someone
-  /// renamed.
-  Future<_DriveChannel?> _search() async {
-    final byTitle = await _searchByTitle();
-    if (byTitle != null) return byTitle;
+  /// the chat lists are loaded and each channel is checked for the drive
+  /// message — which also finds a drive someone renamed, and one someone
+  /// else shared.
+  Future<List<_DriveChannel>> _searchAll() async {
+    final found = <int, _DriveChannel>{};
 
+    Future<void> take(Iterable<int> ids) async {
+      for (final id in ids) {
+        if (found.containsKey(id)) continue;
+        final channel = await _driveChannel(id, requireMark: true);
+        if (channel != null) found[id] = channel;
+      }
+    }
+
+    await take(await _searchByTitle());
     await _loadChatList(const td.ChatListArchive());
     await _loadChatList(const td.ChatListMain());
+    await take(await _searchByTitle());
 
-    final retry = await _searchByTitle();
-    if (retry != null) return retry;
-
-    try {
-      final archived = await _client.send<td.Chats>(
-        const td.GetChats(chatList: td.ChatListArchive(), limit: 500),
-      );
-      for (final chatId in archived.chatIds) {
-        final channel = await _ownedDriveChannel(chatId, requireMark: true);
-        if (channel != null) return channel;
+    for (final list in const [td.ChatListMain(), td.ChatListArchive()]) {
+      try {
+        final chats = await _client.send<td.Chats>(
+          td.GetChats(chatList: list, limit: 200),
+        );
+        await take(chats.chatIds);
+      } catch (e) {
+        debugPrint('[DriveSetup] Chat list scan failed: $e');
       }
-    } catch (e) {
-      debugPrint('[DriveSetup] Archive scan failed: $e');
     }
-    return null;
+    return found.values.toList();
   }
 
   /// Pulls a chat list into TDLib, a page at a time, until it is complete
@@ -383,14 +582,16 @@ class DriveSetup extends Notifier<SetupState> {
     for (var page = 0; page < maxPages; page++) {
       try {
         await _client.send<td.Ok>(td.LoadChats(chatList: list, limit: 100));
-      } on TelegramException catch (e) {
-        if (e.code != 404) debugPrint('[DriveSetup] LoadChats: ${e.message}');
+      } catch (e) {
+        if (e is! TelegramException || e.code != 404) {
+          debugPrint('[DriveSetup] LoadChats: $e');
+        }
         return;
       }
     }
   }
 
-  Future<_DriveChannel?> _searchByTitle() async {
+  Future<List<int>> _searchByTitle() async {
     final candidates = <int>{};
     for (final title in const [channelTitle, 'Cloudora']) {
       for (final request in [
@@ -404,16 +605,13 @@ class DriveSetup extends Notifier<SetupState> {
         }
       }
     }
-    for (final chatId in candidates) {
-      final channel = await _ownedDriveChannel(chatId, requireMark: true);
-      if (channel != null) return channel;
-    }
-    return null;
+    return candidates.toList();
   }
 
-  /// [chatId] if it is a channel this account created (and, when searching,
-  /// one with the drive message in it).
-  Future<_DriveChannel?> _ownedDriveChannel(
+  /// [chatId] if it is a channel holding the drive, with the role this
+  /// account has in it (and, when searching, one with the drive message in
+  /// it).
+  Future<_DriveChannel?> _driveChannel(
     int chatId, {
     required bool requireMark,
   }) async {
@@ -425,12 +623,13 @@ class DriveSetup extends Notifier<SetupState> {
       final supergroup = await _client.send<td.Supergroup>(
         td.GetSupergroup(supergroupId: type.supergroupId),
       );
-      if (supergroup.status is! td.ChatMemberStatusCreator) return null;
-      if (!requireMark) return (chat: chat, card: null);
+      final role = roleOf(supergroup);
+      if (role == null) return null;
+      if (!requireMark) return (chat: chat, card: null, role: role);
 
       final found = await _findDriveMessage(chat.id);
       if (found.card == null) return null;
-      return (chat: chat, card: found.card);
+      return (chat: chat, card: found.card, role: role);
     } catch (_) {
       return null;
     }
@@ -438,8 +637,11 @@ class DriveSetup extends Notifier<SetupState> {
 }
 
 /// A channel taken for the drive, with its drive message when looking for
-/// the channel already met it.
-typedef _DriveChannel = ({td.Chat chat, td.Message? card});
+/// the channel already met it, and what this account may do there.
+typedef _DriveChannel = ({td.Chat chat, td.Message? card, DriveRole role});
+
+/// A drive this account can open: its channel, its title and the role.
+typedef DriveOption = ({int chatId, String title, DriveRole role});
 
 final driveSetupProvider = NotifierProvider<DriveSetup, SetupState>(
   DriveSetup.new,

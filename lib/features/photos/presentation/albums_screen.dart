@@ -7,6 +7,7 @@ import '../../../core/files/file_kind.dart';
 import '../../../core/format/formatters.dart';
 import '../../../core/widgets/common.dart';
 import '../../drive/data/drive_repository.dart';
+import '../../drive/data/drive_session.dart';
 import '../../drive/domain/drive_models.dart';
 import '../../files/presentation/file_actions.dart';
 import '../../phone_albums/data/phone_albums.dart';
@@ -30,12 +31,13 @@ class AlbumsScreen extends ConsumerWidget {
     final media = ref.watch(photosTimelineProvider).value ?? const <DriveFile>[];
     final favorites = media.where((f) => f.starred).toList();
     final videos = media.where((f) => f.kind == FileKind.video).toList();
+    final canEdit = ref.watch(driveCanEditProvider);
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Albums'),
         actions: [
-          if (phoneAlbumsSupported)
+          if (phoneAlbumsSupported && canEdit)
             IconButton(
               tooltip: 'Upload an album from this phone',
               icon: const Icon(Icons.add_photo_alternate_outlined),
@@ -43,12 +45,14 @@ class AlbumsScreen extends ConsumerWidget {
             ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        heroTag: 'albums-fab',
-        onPressed: () => AlbumActions.create(context, ref),
-        icon: const Icon(Icons.add_rounded),
-        label: const Text('New album'),
-      ),
+      floatingActionButton: canEdit
+          ? FloatingActionButton.extended(
+              heroTag: 'albums-fab',
+              onPressed: () => AlbumActions.create(context, ref),
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('New album'),
+            )
+          : null,
       body: AsyncView(
         value: albums,
         data: (albums) => GridView(

@@ -29,6 +29,7 @@ import '../../network/presentation/proxy_sheet.dart';
 import '../../offline/data/offline_sync.dart';
 import '../../picker/data/picker_access.dart';
 import '../../search/data/content_indexer.dart';
+import '../../setup/presentation/drive_sheets.dart';
 import '../../trash/data/pending_deletes.dart';
 import '../data/settings_providers.dart';
 import 'data_limit_sheet.dart';
@@ -128,6 +129,9 @@ class SettingsScreen extends ConsumerWidget {
             children: [
               ListTile(
                 title: const Text('Photo backup'),
+                subtitle: ref.watch(driveCanEditProvider)
+                    ? null
+                    : const Text('Read-only drive'),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -195,10 +199,29 @@ class SettingsScreen extends ConsumerWidget {
               ),
               ListTile(
                 title: Text(session?.channelTitle ?? 'Drive channel'),
-                subtitle: const Text('The private channel that holds your files'),
+                subtitle: Text(
+                  session == null || session.isOwner
+                      ? 'The private channel that holds your files'
+                      : session.role == DriveRole.viewer
+                      ? '${driveRoleLine(session.role)}. Ask the owner to make you an editor.'
+                      : driveRoleLine(session.role),
+                ),
                 trailing: Icon(Icons.open_in_new_rounded, size: 20, color: colors.text3),
                 onTap: openSession == null ? null : () => _openChannel(context, ref, openSession),
               ),
+              ListTile(
+                title: const Text('Switch drive'),
+                subtitle: const Text('Open a drive someone shared with you'),
+                trailing: Icon(Icons.swap_horiz_rounded, size: 20, color: colors.text3),
+                onTap: () => showDriveSwitchSheet(context, ref),
+              ),
+              if (session != null && session.isOwner)
+                ListTile(
+                  title: const Text('Invite people'),
+                  subtitle: const Text('Share this drive with your family'),
+                  trailing: Icon(Icons.person_add_alt_1_outlined, size: 20, color: colors.text3),
+                  onTap: () => showInviteSheet(context, ref, session),
+                ),
               ListTile(
                 title: const Text('Rebuild index'),
                 subtitle: Text(
@@ -367,12 +390,13 @@ class SettingsScreen extends ConsumerWidget {
                     ),
                   ),
                 ),
-              ListTile(
-                title: const Text('Private'),
-                subtitle: const Text('Folders that open only with your fingerprint, face or screen lock'),
-                trailing: Icon(Icons.chevron_right_rounded, color: colors.text3),
-                onTap: () => context.push('/private'),
-              ),
+              if (session != null && session.isOwner)
+                ListTile(
+                  title: const Text('Private'),
+                  subtitle: const Text('Folders that open only with your fingerprint, face or screen lock'),
+                  trailing: Icon(Icons.chevron_right_rounded, color: colors.text3),
+                  onTap: () => context.push('/private'),
+                ),
               ListTile(
                 title: const Text('This session'),
                 subtitle: Text(

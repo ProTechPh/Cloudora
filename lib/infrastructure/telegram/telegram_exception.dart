@@ -23,6 +23,12 @@ class TelegramException implements Exception {
   /// timeout, though TDLib may still send it later.
   bool get isNetworkProblem => code == 408 || message == 'Request timeout';
 
+  /// Telegram turned a write down because this account may not make it.
+  bool get needsRights =>
+      code == 403 ||
+      message.contains('CHAT_ADMIN_REQUIRED') ||
+      message.contains('not enough rights');
+
   /// Telegram refused to edit the message: it was forwarded in, or isn't
   /// the account's own to change.
   bool get isNotEditable =>

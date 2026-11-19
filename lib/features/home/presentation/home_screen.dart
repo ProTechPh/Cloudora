@@ -79,12 +79,14 @@ class HomeScreen extends ConsumerWidget {
         : null;
 
     return Scaffold(
-      floatingActionButton: FloatingActionButton(
-        heroTag: 'home-fab',
-        onPressed: () => FileActions.showCreateSheet(context, ref),
-        tooltip: 'New',
-        child: const Icon(Icons.add_rounded),
-      ),
+      floatingActionButton: ref.watch(driveCanEditProvider)
+          ? FloatingActionButton(
+              heroTag: 'home-fab',
+              onPressed: () => FileActions.showCreateSheet(context, ref),
+              tooltip: 'New',
+              child: const Icon(Icons.add_rounded),
+            )
+          : null,
       body: RefreshIndicator(
         onRefresh: () => ref.read(driveSyncProvider.notifier).refresh(),
         child: CustomScrollView(
@@ -265,6 +267,17 @@ class _Header extends ConsumerWidget {
               const SizedBox(width: Space.s),
             ],
           ),
+          if (session != null && !session.isOwner)
+            Padding(
+              padding: const EdgeInsets.only(top: Space.xs),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Shared drive · ${session.role.name}',
+                  style: context.text.bodySmall?.copyWith(color: colors.text2),
+                ),
+              ),
+            ),
           const SizedBox(height: Space.l),
           Padding(
             padding: const EdgeInsets.only(right: Space.s),
@@ -577,26 +590,30 @@ class _NothingYet extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final canEdit = ref.watch(driveCanEditProvider);
     return EmptyState(
       title: 'Your drive is empty',
-      message:
-          'Upload files here, or forward any file to your Cloudora channel '
-          'in Telegram and it will show up.',
+      message: canEdit
+          ? 'Upload files here, or forward any file to your Cloudora channel '
+                'in Telegram and it will show up.'
+          : readOnlyNotice,
       compact: true,
-      action: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          FilledButton(
-            onPressed: () => FileActions.upload(context, ref),
-            child: const Text('Upload files'),
-          ),
-          const SizedBox(height: Space.s),
-          TextButton(
-            onPressed: () => FileActions.saveFromChat(context, ref),
-            child: const Text('Save from a Telegram chat'),
-          ),
-        ],
-      ),
+      action: canEdit
+          ? Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                FilledButton(
+                  onPressed: () => FileActions.upload(context, ref),
+                  child: const Text('Upload files'),
+                ),
+                const SizedBox(height: Space.s),
+                TextButton(
+                  onPressed: () => FileActions.saveFromChat(context, ref),
+                  child: const Text('Save from a Telegram chat'),
+                ),
+              ],
+            )
+          : null,
     );
   }
 }

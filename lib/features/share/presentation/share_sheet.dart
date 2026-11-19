@@ -14,6 +14,7 @@ import '../../../infrastructure/network/network_status.dart';
 import '../../../infrastructure/storage/preferences.dart';
 import '../../backup/presentation/free_up_space_sheet.dart';
 import '../../drive/data/drive_repository.dart';
+import '../../drive/data/drive_session.dart';
 import '../../drive/domain/drive_models.dart';
 import '../../files/presentation/file_actions.dart';
 import '../../files/presentation/folder_picker.dart';
@@ -35,6 +36,11 @@ enum _Closed { uploaded, cancelled, freeUpSpace }
 Future<void> showShareSheet(BuildContext context, WidgetRef ref) async {
   final files = ref.read(shareIntakeProvider);
   if (files.isEmpty) return;
+  if (!ref.read(driveCanEditProvider)) {
+    showSnack(context, readOnlyNotice);
+    await ref.read(shareIntakeProvider.notifier).clear(discard: true);
+    return;
+  }
   final targets = files.map((f) => f.folderId).toSet();
   FolderChoice? target;
   if (targets.length == 1 && targets.single != null) {

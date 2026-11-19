@@ -377,6 +377,43 @@ td.Supergroup ownedSupergroup({List<String> usernames = const []}) => td.Supergr
   hasUnreadActiveStories: false,
 );
 
+/// The rights an editor has: post, edit and delete, which is what the drive
+/// needs to rename and move what another editor added.
+td.ChatAdministratorRights adminRights({required bool canEdit}) =>
+    td.ChatAdministratorRights(
+      canManageChat: true,
+      canChangeInfo: true,
+      canPostMessages: true,
+      canEditMessages: canEdit,
+      canDeleteMessages: canEdit,
+      canInviteUsers: true,
+      canRestrictMembers: false,
+      canPinMessages: canEdit,
+      canManageTopics: false,
+      canPromoteMembers: false,
+      canManageVideoChats: false,
+      canPostStories: false,
+      canEditStories: false,
+      canDeleteStories: false,
+      isAnonymous: false,
+    );
+
+/// The drive channel as an admin sees it: an editor with all three rights,
+/// or a viewer without edit and delete.
+td.Supergroup adminSupergroup({bool canEdit = true}) =>
+    ownedSupergroup().copyWith(
+      status: td.ChatMemberStatusAdministrator(
+        customTitle: '',
+        canBeEdited: false,
+        rights: adminRights(canEdit: canEdit),
+      ),
+    );
+
+/// The drive channel as a plain member sees it.
+td.Supergroup memberSupergroup() => ownedSupergroup().copyWith(
+  status: const td.ChatMemberStatusMember(memberUntilDate: 0),
+);
+
 /// The account's two-step verification, on or off.
 td.PasswordState passwordState({required bool hasPassword}) => td.PasswordState(
   hasPassword: hasPassword,

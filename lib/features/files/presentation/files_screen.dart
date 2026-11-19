@@ -11,6 +11,7 @@ import '../../../core/widgets/common.dart';
 import '../../../core/widgets/selection_bar.dart';
 import '../../../infrastructure/storage/preferences.dart';
 import '../../drive/data/drive_repository.dart';
+import '../../drive/data/drive_session.dart';
 import '../../drive/data/drive_sync.dart';
 import '../../drive/data/forward_origin.dart';
 import '../../drive/domain/drive_models.dart';
@@ -371,7 +372,7 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
                     data.folders.every((f) => _folders.contains(f.id)),
               )
             : null,
-        floatingActionButton: _selecting
+        floatingActionButton: _selecting || !ref.watch(driveCanEditProvider)
             ? null
             : FloatingActionButton(
                 heroTag: widget.private
@@ -404,15 +405,19 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
                     title: widget.folderId == null
                         ? 'Nothing here yet'
                         : 'This folder is empty',
-                    message: 'Upload files, or tap New to make a folder.',
-                    action: FilledButton(
-                      onPressed: () => FileActions.upload(
-                        context,
-                        ref,
-                        folderId: widget.folderId,
-                      ),
-                      child: const Text('Upload files'),
-                    ),
+                    message: ref.watch(driveCanEditProvider)
+                        ? 'Upload files, or tap New to make a folder.'
+                        : readOnlyNotice,
+                    action: ref.watch(driveCanEditProvider)
+                        ? FilledButton(
+                            onPressed: () => FileActions.upload(
+                              context,
+                              ref,
+                              folderId: widget.folderId,
+                            ),
+                            child: const Text('Upload files'),
+                          )
+                        : null,
                   ),
                 )
               else ...[

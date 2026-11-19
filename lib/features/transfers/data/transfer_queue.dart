@@ -792,12 +792,19 @@ class TransferQueue extends Notifier<TransfersState> {
   /// list. Files already copied stay in the drive.
   Future<void> cancelCopies() => _cancelAll(TransferOrigin.fromChat);
 
+  /// Stops every pending transfer and drops it from the list, for a switch
+  /// to another drive where its folders and files mean nothing.
+  Future<void> cancelAll() => _cancelPending((_) => true);
+
   /// Stops every pending transfer from [origin] and drops them from the
   /// list.
-  Future<void> _cancelAll(TransferOrigin origin) async {
+  Future<void> _cancelAll(TransferOrigin origin) =>
+      _cancelPending((r) => r.origin == origin);
+
+  Future<void> _cancelPending(bool Function(TransferRow row) which) async {
     final ids = [
       for (final r in _rows.values)
-        if (r.origin == origin && r.status.isPending) r.id,
+        if (which(r) && r.status.isPending) r.id,
     ];
     // Waiting ones go first, so nothing new starts while the rest stop.
     final running = ids.where(_running.contains).toList();

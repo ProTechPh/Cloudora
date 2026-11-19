@@ -43,6 +43,7 @@ import '../../drive/data/channel_messenger.dart';
 import '../../drive/data/drive_repository.dart';
 import '../../drive/data/drive_session.dart';
 import '../../drive/domain/drive_models.dart';
+import '../../setup/data/drive_setup.dart';
 import '../../takeout/data/takeout_files.dart';
 import '../../takeout/data/takeout_import.dart';
 import '../../transfers/data/leftovers.dart';
@@ -832,6 +833,7 @@ abstract final class FileActions {
       () => ref
           .read(driveRepositoryProvider)
           .createFolder(name, parentId: parentId),
+      ref: ref,
     );
   }
 
@@ -1049,6 +1051,10 @@ abstract final class FileActions {
     WidgetRef ref, {
     String? folderId,
   }) {
+    if (!ref.read(driveCanEditProvider)) {
+      showSnack(context, readOnlyNotice);
+      return Future<void>.value();
+    }
     return showModalBottomSheet<void>(
       context: context,
       useRootNavigator: true,
@@ -1226,6 +1232,7 @@ abstract final class FileActions {
       context,
       () => repository.renameFile(file, name),
       success: offlineAware(ref, 'Renamed to "$name"'),
+      ref: ref,
       undo: () async {
         for (final current in await _current(repository, [file])) {
           await repository.renameFile(current, file.name);
@@ -1257,6 +1264,7 @@ abstract final class FileActions {
         unawaited(recent.refresh());
       },
       success: offlineAware(ref, 'Renamed to "$name"'),
+      ref: ref,
       undo: () async {
         for (final current in await _currentFolders(repository, [folder])) {
           await repository.renameFolder(current, folder.name);
@@ -1363,6 +1371,7 @@ abstract final class FileActions {
     final outcome = await runBulk<_Step>(
       context,
       ref.read(bulkEditsProvider.notifier),
+      ref: ref,
       label:
           'Moving ${Formatters.count(moving.length + folders.length, 'item')}',
       icon: Icons.drive_file_move_outline,
@@ -1434,6 +1443,7 @@ abstract final class FileActions {
     final outcome = await runBulk<Object>(
       context,
       ref.read(bulkEditsProvider.notifier),
+      ref: ref,
       label: label(items.length, starring: starred),
       icon: Icons.star_outline_rounded,
       items: items,
@@ -1481,6 +1491,7 @@ abstract final class FileActions {
     return _guard(
       context,
       () => repository.setFolderHiddenFromPhotos([folder], hidden: hidden),
+      ref: ref,
       success: offlineAware(
         ref,
         hidden
@@ -1533,6 +1544,7 @@ abstract final class FileActions {
     final done = await _guard(
       context,
       () => repository.setFolderPrivate([folder], private: private),
+      ref: ref,
       success: offlineAware(
         ref,
         private
@@ -1606,6 +1618,7 @@ abstract final class FileActions {
     final outcome = await runBulk<_Step>(
       context,
       edits,
+      ref: ref,
       label: 'Moving ${Formatters.count(total, 'item')} to Trash',
       icon: Icons.delete_outline_rounded,
       items: <_Step>[
@@ -1722,6 +1735,7 @@ abstract final class FileActions {
       context,
       () => repository.restore(files: files, folders: folders),
       success: offlineAware(ref, 'Restored ${_describe(files, folders)}'),
+      ref: ref,
       undo: () async => repository.trash(
         files: await _current(repository, files),
         folders: await _currentFolders(repository, folders),
@@ -1844,6 +1858,7 @@ abstract final class FileActions {
     bool fromViewer = false,
     VoidCallback? onLeaving,
   }) {
+    final canEdit = ref.read(driveCanEditProvider);
     return showModalBottomSheet<void>(
       context: context,
       useRootNavigator: true,
@@ -1917,29 +1932,31 @@ abstract final class FileActions {
                   label: 'Share',
                   onTap: () => run(() => share(context, ref, file)),
                 ),
-                _SheetAction(
-                  icon: file.starred
-                      ? Icons.star_rounded
-                      : Icons.star_outline_rounded,
-                  label: file.starred
-                      ? 'Remove from Starred'
-                      : 'Add to Starred',
-                  onTap: () => run(
-                    () => setStarred(context, ref, [
-                      file,
-                    ], starred: !file.starred),
+                if (canEdit) ...[
+                  _SheetAction(
+                    icon: file.starred
+                        ? Icons.star_rounded
+                        : Icons.star_outline_rounded,
+                    label: file.starred
+                        ? 'Remove from Starred'
+                        : 'Add to Starred',
+                    onTap: () => run(
+                      () => setStarred(context, ref, [
+                        file,
+                      ], starred: !file.starred),
+                    ),
                   ),
-                ),
-                _SheetAction(
-                  icon: Icons.drive_file_rename_outline_rounded,
-                  label: 'Rename',
-                  onTap: () => run(() => renameFile(context, ref, file)),
-                ),
-                _SheetAction(
-                  icon: Icons.drive_file_move_outline,
-                  label: 'Move',
-                  onTap: () => run(() => move(context, ref, files: [file])),
-                ),
+                  _SheetAction(
+                    icon: Icons.drive_file_rename_outline_rounded,
+                    label: 'Rename',
+                    onTap: () => run(() => renameFile(context, ref, file)),
+                  ),
+                  _SheetAction(
+                    icon: Icons.drive_file_move_outline,
+                    label: 'Move',
+                    onTap: () => run(() => move(context, ref, files: [file])),
+                  ),
+                ],
                 _SheetAction(
                   icon: Icons.folder_open_outlined,
                   label: 'Show in folder',
@@ -1955,12 +1972,13 @@ abstract final class FileActions {
                   label: 'Show in Telegram',
                   onTap: () => run(() => showInTelegram(context, ref, file)),
                 ),
-                _SheetAction(
-                  icon: Icons.delete_outline_rounded,
-                  label: 'Move to Trash',
-                  destructive: true,
-                  onTap: () => run(() => delete(context, ref, files: [file])),
-                ),
+                if (canEdit)
+                  _SheetAction(
+                    icon: Icons.delete_outline_rounded,
+                    label: 'Move to Trash',
+                    destructive: true,
+                    onTap: () => run(() => delete(context, ref, files: [file])),
+                  ),
               ],
             ),
           ),
@@ -1974,6 +1992,8 @@ abstract final class FileActions {
     WidgetRef ref,
     DriveFolder folder,
   ) {
+    final canEdit = ref.read(driveCanEditProvider);
+    final isOwner = ref.read(visibleSessionProvider)?.isOwner ?? true;
     return showModalBottomSheet<void>(
       context: context,
       useRootNavigator: true,
@@ -2016,75 +2036,78 @@ abstract final class FileActions {
                         setOffline(context, ref, folder: folder, keep: !pinned),
                   ),
                 ),
-                _SheetAction(
-                  icon: folder.starred
-                      ? Icons.star_rounded
-                      : Icons.star_outline_rounded,
-                  label: folder.starred
-                      ? 'Remove from Starred'
-                      : 'Add to Starred',
-                  onTap: () => run(
-                    () => setStarred(
-                      context,
-                      ref,
-                      const [],
-                      folders: [folder],
-                      starred: !folder.starred,
-                    ),
-                  ),
-                ),
-                _SheetAction(
-                  icon: folder.hiddenFromPhotos
-                      ? Icons.photo_library_outlined
-                      : Icons.hide_image_outlined,
-                  label: folder.hiddenFromPhotos
-                      ? 'Show in Photos'
-                      : 'Hide from Photos',
-                  onTap: () => run(
-                    () => setHiddenFromPhotos(
-                      context,
-                      ref,
-                      folder,
-                      hidden: !folder.hiddenFromPhotos,
-                    ),
-                  ),
-                ),
-                // A folder inside a private one is private with it, and
-                // goes in or out with that folder.
-                if (folder.private || !folder.inPrivate)
+                if (canEdit) ...[
                   _SheetAction(
-                    icon: folder.private
-                        ? Icons.lock_open_outlined
-                        : Icons.lock_outline_rounded,
-                    label: folder.private
-                        ? 'Take out of Private'
-                        : 'Move to Private',
+                    icon: folder.starred
+                        ? Icons.star_rounded
+                        : Icons.star_outline_rounded,
+                    label: folder.starred
+                        ? 'Remove from Starred'
+                        : 'Add to Starred',
                     onTap: () => run(
-                      () => setPrivate(
+                      () => setStarred(
                         context,
                         ref,
-                        folder,
-                        private: !folder.private,
+                        const [],
+                        folders: [folder],
+                        starred: !folder.starred,
                       ),
                     ),
                   ),
-                _SheetAction(
-                  icon: Icons.drive_file_rename_outline_rounded,
-                  label: 'Rename',
-                  onTap: () => run(() => renameFolder(context, ref, folder)),
-                ),
-                _SheetAction(
-                  icon: Icons.drive_file_move_outline,
-                  label: 'Move',
-                  onTap: () => run(() => move(context, ref, folders: [folder])),
-                ),
-                _SheetAction(
-                  icon: Icons.delete_outline_rounded,
-                  label: 'Move to Trash',
-                  destructive: true,
-                  onTap: () =>
-                      run(() => delete(context, ref, folders: [folder])),
-                ),
+                  _SheetAction(
+                    icon: folder.hiddenFromPhotos
+                        ? Icons.photo_library_outlined
+                        : Icons.hide_image_outlined,
+                    label: folder.hiddenFromPhotos
+                        ? 'Show in Photos'
+                        : 'Hide from Photos',
+                    onTap: () => run(
+                      () => setHiddenFromPhotos(
+                        context,
+                        ref,
+                        folder,
+                        hidden: !folder.hiddenFromPhotos,
+                      ),
+                    ),
+                  ),
+                  // A folder inside a private one is private with it, and
+                  // goes in or out with that folder.
+                  if (isOwner && (folder.private || !folder.inPrivate))
+                    _SheetAction(
+                      icon: folder.private
+                          ? Icons.lock_open_outlined
+                          : Icons.lock_outline_rounded,
+                      label: folder.private
+                          ? 'Take out of Private'
+                          : 'Move to Private',
+                      onTap: () => run(
+                        () => setPrivate(
+                          context,
+                          ref,
+                          folder,
+                          private: !folder.private,
+                        ),
+                      ),
+                    ),
+                  _SheetAction(
+                    icon: Icons.drive_file_rename_outline_rounded,
+                    label: 'Rename',
+                    onTap: () => run(() => renameFolder(context, ref, folder)),
+                  ),
+                  _SheetAction(
+                    icon: Icons.drive_file_move_outline,
+                    label: 'Move',
+                    onTap: () =>
+                        run(() => move(context, ref, folders: [folder])),
+                  ),
+                  _SheetAction(
+                    icon: Icons.delete_outline_rounded,
+                    label: 'Move to Trash',
+                    destructive: true,
+                    onTap: () =>
+                        run(() => delete(context, ref, folders: [folder])),
+                  ),
+                ],
               ],
             ),
           ),
@@ -2325,6 +2348,7 @@ abstract final class FileActions {
     String? success,
     Future<void> Function()? undo,
     String failurePrefix = '',
+    WidgetRef? ref,
   }) async {
     try {
       await action();
@@ -2341,12 +2365,20 @@ abstract final class FileActions {
               undo,
               success: 'Undone',
               failurePrefix: _undoFailed,
+              ref: ref,
             ),
           );
         }
       }
       return true;
     } catch (e) {
+      // Rights taken away while the sheet was open: say so in the one
+      // sentence the person can act on, and read the role again.
+      if (e is TelegramException && e.needsRights) {
+        unawaited(ref?.read(driveSetupProvider.notifier).refreshRole());
+        if (context.mounted) showSnack(context, readOnlyNotice);
+        return false;
+      }
       if (context.mounted) showSnack(context, '$failurePrefix${failureOf(e)}');
     }
     return false;
@@ -2404,6 +2436,7 @@ abstract final class FileActions {
   static Future<BulkOutcome?> runBulk<T>(
     BuildContext context,
     BulkEdits edits, {
+    WidgetRef? ref,
     required String label,
     required IconData icon,
     required List<T> items,
@@ -2422,7 +2455,7 @@ abstract final class FileActions {
         items: items,
         apply: apply,
       );
-    }, failurePrefix: failurePrefix);
+    }, failurePrefix: failurePrefix, ref: ref);
     final ended = outcome;
     if (ended == null) return null;
     final error = ended.error;

@@ -234,40 +234,55 @@ class AuthController extends Notifier<AuthUiState> {
   /// back the access to each, so no grant is left that nothing uses. When
   /// the phone's caches were last trimmed is forgotten as well,
   /// so the next drive to open trims them once straight away. The drive
-  /// leaves Android's file picker, and the picker's bridge to the stream
-  /// server goes with it, so whoever signs in next turns the picker on for
-  /// their own drive. Anything new
-  /// that the phone keeps per drive, whether a table, a preference or a
-  /// file, adds its cleanup here.
-  Future<void> wipeDeviceState() async {
+  /// leaves Android's file picker, and the picker's bridge to the stream.
+  ///
+  /// Everything this phone keeps about the drive that is open, without the
+  /// account itself, is [wipeDriveState]'s: the old drive's photos never
+  /// look backed up and its uploads never follow.
+  Future<void> wipeDriveState() async {
+    // Read up front: a wipe can outlive the provider it started from.
+    final prefs = ref.read(preferencesProvider);
+    final recent = ref.read(recentDestinationsProvider.notifier);
+    final watched = ref.read(watchedFoldersProvider.notifier);
+    final takeout = ref.read(takeoutImportProvider.notifier);
+    final db = ref.read(appDatabaseProvider);
     ref.read(pendingDeletesProvider.notifier).discardAll();
     ref.read(driveSessionProvider.notifier).close();
     await ref.read(driveSnapshotProvider.notifier).clear();
-    final prefs = ref.read(preferencesProvider);
     for (final chatId in prefs.syncedChatIds) {
       await prefs.forgetChannel(chatId);
     }
-    await prefs.clearSessionEnded();
-    await prefs.clearLastUserId();
     await prefs.clearCheckupLastRun();
     await prefs.clearBackupVerified();
     await prefs.forgetBackupFullScan();
     await prefs.forgetBackgroundRun();
-    await prefs.setDeletePhoneCopyToo(false);
-    await prefs.setOfflineWifiOnly(false);
     await prefs.forgetRecentSendChats();
     await prefs.forgetCacheSweptAt();
-    await ref.read(pickerEnabledProvider.notifier).set(false);
-    await deletePickerBridge();
-    ref.invalidate(checkupLastRunProvider);
-    ref.invalidate(revealHiddenProvider);
-    ref.invalidate(offlineSyncProvider);
-    await ref.read(recentDestinationsProvider.notifier).clear();
-    await ref.read(watchedFoldersProvider.notifier).forgetAll();
-    await ref.read(takeoutImportProvider.notifier).forgetAll();
-    await ref.read(appDatabaseProvider).clearAll();
+    if (ref.mounted) {
+      ref.invalidate(checkupLastRunProvider);
+      ref.invalidate(revealHiddenProvider);
+      ref.invalidate(offlineSyncProvider);
+    }
+    await recent.clear();
+    await watched.forgetAll();
+    await takeout.forgetAll();
+    await db.clearAll();
     await _deleteOfflineCopies();
     await deletePdfBlockCache();
+  }
+
+  /// Forgets the account too, after [wipeDriveState].
+  Future<void> wipeDeviceState() async {
+    // Read up front too: the wipe outlives the controller by design.
+    final prefs = ref.read(preferencesProvider);
+    final picker = ref.read(pickerEnabledProvider.notifier);
+    await wipeDriveState();
+    await prefs.clearSessionEnded();
+    await prefs.clearLastUserId();
+    await prefs.setDeletePhoneCopyToo(false);
+    await prefs.setOfflineWifiOnly(false);
+    if (ref.mounted) await picker.set(false);
+    await deletePickerBridge();
     // A wipe that outlives the controller has no sign-in screens to reset.
     if (ref.mounted) state = const AuthUiState();
   }

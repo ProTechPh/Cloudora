@@ -552,6 +552,7 @@ class BackupController extends Notifier<BackupState> {
   /// Asks for photo access and starts backing up. Returns false if access
   /// was refused.
   Future<bool> enable() async {
+    if (!ref.read(driveCanEditProvider)) return false;
     final permission = await PhotoManager.requestPermissionExtend(
       requestOption: permissionOption,
     );
@@ -1171,6 +1172,12 @@ class BackupController extends Notifier<BackupState> {
   Future<void> _pass() async {
     if (ref.read(driveSessionProvider) == null) {
       state = state.copyWith(phase: BackupPhase.waitingForDrive);
+      return;
+    }
+    // A drive this phone may only read takes no pass: nothing would go up,
+    // and the app-closed job would try in the background too.
+    if (!ref.read(driveCanEditProvider)) {
+      state = state.copyWith(phase: BackupPhase.off, clearCurrent: true);
       return;
     }
 

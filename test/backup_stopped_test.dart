@@ -62,6 +62,26 @@ class _Queue extends TransferQueue {
   TransfersState build() => TransfersState.empty;
 }
 
+/// The drive open with [role], as an invited phone has it.
+class _RoleSession extends DriveSessionNotifier {
+  _RoleSession(this.role);
+
+  final DriveRole role;
+
+  @override
+  DriveSession? build() => DriveSession(
+    userId: 1,
+    chatId: testChatId,
+    channelTitle: 'Cloudora',
+    firstName: 'A',
+    lastName: '',
+    phoneNumber: '',
+    username: null,
+    isPremium: false,
+    role: role,
+  );
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -113,6 +133,47 @@ void main() {
     await controller.run();
     expect(state().phase, BackupPhase.upToDate);
     expect(state().error, isNull);
+  });
+
+  test('a viewer\'s phone runs no pass, even with backup left on', () async {
+    // ignore: invalid_use_of_visible_for_testing_member
+    SharedPreferences.setMockInitialValues({
+      BackupPrefKeys.enabled: true,
+      'full_sync_$testChatId': DateTime.now().millisecondsSinceEpoch,
+    });
+    final shared = await SharedPreferences.getInstance();
+    var lookedAtLibrary = false;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(photos, (call) async {
+          if (call.method == 'getPermissionState') lookedAtLibrary = true;
+          return switch (call.method) {
+            'getPermissionState' => PermissionState.authorized.index,
+            'getAssetPathList' => {'data': <Object>[]},
+            _ => null,
+          };
+        });
+    final db = AppDatabase(NativeDatabase.memory());
+    final container = ProviderContainer(
+      overrides: [
+        sharedPreferencesProvider.overrideWithValue(shared),
+        appDatabaseProvider.overrideWithValue(db),
+        driveSessionProvider.overrideWith(() => _RoleSession(DriveRole.viewer)),
+        driveSyncProvider.overrideWith(_Sync.new),
+        transferQueueProvider.overrideWith(_Queue.new),
+      ],
+    );
+    addTearDown(() async {
+      container.dispose();
+      await db.close();
+    });
+
+    await container.read(backupControllerProvider.notifier).run();
+
+    expect(lookedAtLibrary, isFalse);
+    expect(
+      container.read(backupControllerProvider).phase,
+      BackupPhase.off,
+    );
   });
 
   testWidgets('a stopped backup offers Retry, as Home and Photos do', (tester) async {

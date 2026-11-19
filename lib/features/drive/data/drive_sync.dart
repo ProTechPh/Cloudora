@@ -104,6 +104,13 @@ class DriveSync extends Notifier<SyncState> {
   DriveRepository get _repository => ref.read(driveRepositoryProvider);
   Preferences get _prefs => ref.read(preferencesProvider);
 
+  /// Whether this phone may make [write] in the drive it has open. No open
+  /// session means no drive to ask about, which is the boot path.
+  bool _may(DriveWrite write) {
+    final role = ref.read(driveSessionProvider)?.role;
+    return role == null || mayWrite(role, write);
+  }
+
   @override
   SyncState build() {
     _client = ref.watch(telegramClientProvider);
@@ -238,10 +245,12 @@ class DriveSync extends Notifier<SyncState> {
         await _prefs.setIndexedWith(chatId, MessageIndexer.version);
         // Once a day, like the full read: what has sat in the trash for 30
         // days goes for good.
-        try {
-          await _repository.purgeTrash();
-        } catch (e) {
-          debugPrint('[DriveSync] Emptying old trash: $e');
+        if (_may(DriveWrite.trashPurge)) {
+          try {
+            await _repository.purgeTrash();
+          } catch (e) {
+            debugPrint('[DriveSync] Emptying old trash: $e');
+          }
         }
       }
       if (newest > 0) await _prefs.setLastSyncedMessageId(chatId, newest);
@@ -251,7 +260,7 @@ class DriveSync extends Notifier<SyncState> {
       // on, what each read brings in is filed by its comment.
       if (_prefs.forwardFilingFrom(chatId) == null) {
         await _prefs.setForwardFilingFrom(chatId, math.max(newest, stopAt));
-      } else if (adopted.isNotEmpty) {
+      } else if (adopted.isNotEmpty && _may(DriveWrite.forwardFiling)) {
         unawaited(ref.read(forwardFilerProvider.notifier).consider(adopted));
       }
 
@@ -267,7 +276,9 @@ class DriveSync extends Notifier<SyncState> {
         lastFull: full ? now : null,
         clearError: true,
       );
-      if (full) unawaited(ref.read(indexCopiesProvider).writeIfDue(chatId));
+      if (full && _may(DriveWrite.indexCopy)) {
+        unawaited(ref.read(indexCopiesProvider).writeIfDue(chatId));
+      }
     } on TelegramException catch (e) {
       state = state.copyWith(running: false, error: e.friendlyMessage);
       if (full) _retryFullSync();

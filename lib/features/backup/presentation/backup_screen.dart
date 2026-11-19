@@ -11,6 +11,7 @@ import '../../../core/widgets/common.dart';
 import '../../../infrastructure/database/app_database.dart';
 import '../../../infrastructure/notifications/app_notifications.dart';
 import '../../../infrastructure/storage/preferences.dart';
+import '../../drive/data/drive_session.dart';
 import '../../drive/data/drive_sync.dart';
 import '../../network/data/mobile_data.dart';
 import '../../takeout/data/takeout_files.dart';
@@ -50,6 +51,7 @@ class BackupScreen extends ConsumerWidget {
     final withinLimit = limit != null && mobileData != BackupMobileData.off;
     final missing = ref.watch(missingCountProvider).value ?? 0;
     final folders = PhoneFolders.supported;
+    final canEdit = ref.watch(driveCanEditProvider);
     final watching =
         folders && (ref.watch(watchedFolderViewsProvider).value?.isNotEmpty ?? false);
 
@@ -112,13 +114,23 @@ class BackupScreen extends ConsumerWidget {
         padding: const EdgeInsets.only(bottom: Space.x4),
         children: [
           const BackupStatusPanel(),
+          if (!canEdit)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                Space.gutter,
+                Space.s,
+                Space.gutter,
+                Space.s,
+              ),
+              child: Text(readOnlyNotice, style: context.text.bodyMedium),
+            ),
           // Home's "Backup stopped" and "Backup is paused" lines open this
           // screen, so the way to carry on is here too, not only on Home.
-          if (backup.phase
-              case BackupPhase.off ||
-                  BackupPhase.needsPermission ||
-                  BackupPhase.stopped ||
-                  BackupPhase.paused)
+          if (canEdit &&
+              (backup.phase == BackupPhase.off ||
+                  backup.phase == BackupPhase.needsPermission ||
+                  backup.phase == BackupPhase.stopped ||
+                  backup.phase == BackupPhase.paused))
             Padding(
               padding: const EdgeInsets.fromLTRB(Space.gutter, 0, Space.gutter, Space.s),
               child: SizedBox(
@@ -145,9 +157,9 @@ class BackupScreen extends ConsumerWidget {
               ),
             ),
           if (!backup.enabled) ...[
-            if (folders) const _WatchedFolders(),
+            if (canEdit && folders) const _WatchedFolders(),
             if (watching) ...when,
-            if (TakeoutFiles.supported) const _FromGoogle(),
+            if (canEdit && TakeoutFiles.supported) const _FromGoogle(),
           ],
           const FreeUpSpaceTile(),
           if (backup.failed > 0 || backup.remaining > 0) ...[
@@ -197,7 +209,7 @@ class BackupScreen extends ConsumerWidget {
             const _WhatToBackUp(),
             ...when,
             const _WhileClosed(),
-            if (folders) const _WatchedFolders(),
+            if (canEdit && folders) const _WatchedFolders(),
             if (TakeoutFiles.supported) const _FromGoogle(),
             const SizedBox(height: Space.xxl),
             const DuplicateBackupsTile(),
