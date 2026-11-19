@@ -18,6 +18,7 @@ import '../../drive/data/drive_session.dart';
 import '../../drive/data/drive_sync.dart';
 import '../../drive/data/index_copies.dart';
 import '../../drive/domain/manifest.dart';
+import '../../transfers/data/transfer_queue.dart';
 
 enum SetupStep { account, channel, indexing, done }
 
@@ -182,6 +183,53 @@ class DriveSetup extends Notifier<SetupState> {
     ref.read(driveSessionProvider.notifier).open(session);
     await ref.read(driveSyncProvider.notifier).refresh();
     return session;
+  }
+
+  /// Opens another drive on this phone: another channel this account can
+  /// use, perhaps one someone else shared. Everything this phone kept for
+  /// the old drive goes first, so nothing of it shows in the new one.
+  Future<void> switchTo(int chatId) async {
+    final me = await _client.send<td.User>(const td.GetMe());
+    if (await _driveChannel(chatId, requireMark: true) == null) {
+      throw const TelegramException(404, 'DRIVE_NOT_FOUND');
+    }
+    await ref.read(transferQueueProvider.notifier).cancelAll();
+    await ref.read(authControllerProvider.notifier).wipeDriveState();
+    await _prefs.forgetChannel(chatId);
+    await _prefs.setDriveChatId(me.id, chatId);
+    await run();
+  }
+
+  /// Every channel this account can open that holds a drive, with the role
+  /// it has there. Asked only when someone opens the switch list, since it
+  /// looks through the account's channels.
+  Future<List<DriveOption>> switchableDrives() async {
+    await _loadChatList(const td.ChatListMain());
+    await _loadChatList(const td.ChatListArchive());
+    final ids = <int>{};
+    for (final list in const [td.ChatListMain(), td.ChatListArchive()]) {
+      try {
+        ids.addAll(
+          (await _client.send<td.Chats>(
+            td.GetChats(chatList: list, limit: 200),
+          )).chatIds,
+        );
+      } catch (e) {
+        debugPrint('[DriveSetup] Listing drives: $e');
+      }
+    }
+    final found = <DriveOption>[];
+    for (final id in ids) {
+      final channel = await _driveChannel(id, requireMark: true);
+      if (channel != null) {
+        found.add((
+          chatId: id,
+          title: channel.chat.title,
+          role: channel.role,
+        ));
+      }
+    }
+    return found;
   }
 
   Future<(td.Chat, bool, DriveRole)?> _locateOrCreate(int userId) async {
@@ -454,6 +502,9 @@ class DriveSetup extends Notifier<SetupState> {
 /// A channel taken for the drive, with its drive message when looking for
 /// the channel already met it, and what this account may do there.
 typedef _DriveChannel = ({td.Chat chat, td.Message? card, DriveRole role});
+
+/// A drive this account can open: its channel, its title and the role.
+typedef DriveOption = ({int chatId, String title, DriveRole role});
 
 final driveSetupProvider = NotifierProvider<DriveSetup, SetupState>(
   DriveSetup.new,

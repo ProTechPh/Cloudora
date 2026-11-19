@@ -265,6 +265,17 @@ class _Header extends ConsumerWidget {
               const SizedBox(width: Space.s),
             ],
           ),
+          if (session != null && !session.isOwner)
+            Padding(
+              padding: const EdgeInsets.only(top: Space.xs),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Shared drive · ${session.role.name}',
+                  style: context.text.bodySmall?.copyWith(color: colors.text2),
+                ),
+              ),
+            ),
           const SizedBox(height: Space.l),
           Padding(
             padding: const EdgeInsets.only(right: Space.s),
