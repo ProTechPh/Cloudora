@@ -100,7 +100,9 @@ class DriveSetup extends Notifier<SetupState> {
       // no longer matches it.
       final snapshot = ref.read(driveSnapshotProvider);
       state = state.copyWith(step: SetupStep.channel);
-      final (chat, created) = await _locateOrCreate(me.id);
+      final located = await _locateOrCreate(me.id);
+      if (located == null) return;
+      final (chat, created, role) = located;
       if (snapshot != null && chat.id != snapshot.chatId) {
         // The drive channel was replaced. The index read from the old one
         // goes before the new one is read in full, so the two never mix,
@@ -120,6 +122,7 @@ class DriveSetup extends Notifier<SetupState> {
         phoneNumber: me.phoneNumber,
         username: me.usernames?.activeUsernames.firstOrNull,
         isPremium: me.isPremium,
+        role: role,
       );
       final sync = ref.read(driveSyncProvider.notifier);
       ref.read(driveSessionProvider.notifier).open(session);
@@ -163,7 +166,7 @@ class DriveSetup extends Notifier<SetupState> {
     if (saved == null) return null;
     final me = await _client.send<td.User>(const td.GetMe());
     if (me.id != saved.userId || _prefs.lastUserId != me.id) return null;
-    final channel = await _ownedDriveChannel(saved.chatId, requireMark: false);
+    final channel = await _driveChannel(saved.chatId, requireMark: false);
     if (channel == null) return null;
     final session = DriveSession(
       userId: me.id,
@@ -174,21 +177,24 @@ class DriveSetup extends Notifier<SetupState> {
       phoneNumber: me.phoneNumber,
       username: me.usernames?.activeUsernames.firstOrNull,
       isPremium: me.isPremium,
+      role: channel.role,
     );
     ref.read(driveSessionProvider.notifier).open(session);
     await ref.read(driveSyncProvider.notifier).refresh();
     return session;
   }
 
-  Future<(td.Chat, bool)> _locateOrCreate(int userId) async {
+  Future<(td.Chat, bool, DriveRole)?> _locateOrCreate(int userId) async {
     final saved = _prefs.driveChatId(userId);
     if (saved != null) {
-      final channel = await _ownedDriveChannel(saved, requireMark: false);
-      if (channel != null) return (await _brand(channel), false);
+      final channel = await _driveChannel(saved, requireMark: false);
+      if (channel != null) {
+        return (await _brand(channel), false, channel.role);
+      }
     }
 
     final found = await _search();
-    if (found != null) return (await _brand(found), false);
+    if (found != null) return (await _brand(found), false, found.role);
 
     final chat = await _client.send<td.Chat>(
       const td.CreateNewSupergroupChat(
@@ -208,7 +214,11 @@ class DriveSetup extends Notifier<SetupState> {
     } catch (e) {
       debugPrint('[DriveSetup] Could not archive the channel: $e');
     }
-    return (await _brand((chat: chat, card: null)), true);
+    return (
+      await _brand((chat: chat, card: null, role: DriveRole.owner)),
+      true,
+      DriveRole.owner,
+    );
   }
 
   /// Brings a channel in line with how Cloudora presents it: the app icon as
@@ -216,6 +226,8 @@ class DriveSetup extends Notifier<SetupState> {
   /// description are the owner's to change. Best-effort — none of this is
   /// needed for the drive to work.
   Future<td.Chat> _brand(_DriveChannel channel) async {
+    // Someone else's drive keeps its look: its owner decides those.
+    if (channel.role != DriveRole.owner) return channel.chat;
     var chat = channel.chat;
     try {
       if (chat.photo == null) {
@@ -368,7 +380,7 @@ class DriveSetup extends Notifier<SetupState> {
         const td.GetChats(chatList: td.ChatListArchive(), limit: 500),
       );
       for (final chatId in archived.chatIds) {
-        final channel = await _ownedDriveChannel(chatId, requireMark: true);
+        final channel = await _driveChannel(chatId, requireMark: true);
         if (channel != null) return channel;
       }
     } catch (e) {
@@ -405,15 +417,16 @@ class DriveSetup extends Notifier<SetupState> {
       }
     }
     for (final chatId in candidates) {
-      final channel = await _ownedDriveChannel(chatId, requireMark: true);
+      final channel = await _driveChannel(chatId, requireMark: true);
       if (channel != null) return channel;
     }
     return null;
   }
 
-  /// [chatId] if it is a channel this account created (and, when searching,
-  /// one with the drive message in it).
-  Future<_DriveChannel?> _ownedDriveChannel(
+  /// [chatId] if it is a channel holding the drive, with the role this
+  /// account has in it (and, when searching, one with the drive message in
+  /// it).
+  Future<_DriveChannel?> _driveChannel(
     int chatId, {
     required bool requireMark,
   }) async {
@@ -425,12 +438,13 @@ class DriveSetup extends Notifier<SetupState> {
       final supergroup = await _client.send<td.Supergroup>(
         td.GetSupergroup(supergroupId: type.supergroupId),
       );
-      if (supergroup.status is! td.ChatMemberStatusCreator) return null;
-      if (!requireMark) return (chat: chat, card: null);
+      final role = roleOf(supergroup);
+      if (role == null) return null;
+      if (!requireMark) return (chat: chat, card: null, role: role);
 
       final found = await _findDriveMessage(chat.id);
       if (found.card == null) return null;
-      return (chat: chat, card: found.card);
+      return (chat: chat, card: found.card, role: role);
     } catch (_) {
       return null;
     }
@@ -438,8 +452,8 @@ class DriveSetup extends Notifier<SetupState> {
 }
 
 /// A channel taken for the drive, with its drive message when looking for
-/// the channel already met it.
-typedef _DriveChannel = ({td.Chat chat, td.Message? card});
+/// the channel already met it, and what this account may do there.
+typedef _DriveChannel = ({td.Chat chat, td.Message? card, DriveRole role});
 
 final driveSetupProvider = NotifierProvider<DriveSetup, SetupState>(
   DriveSetup.new,

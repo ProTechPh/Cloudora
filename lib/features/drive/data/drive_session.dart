@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:handy_tdlib/api.dart' as td;
 
 import '../../../infrastructure/storage/preferences.dart';
 
@@ -26,6 +27,20 @@ bool mayWrite(DriveRole role, DriveWrite write) => switch (role) {
   DriveRole.owner => true,
   DriveRole.editor => write != DriveWrite.indexCopy,
   DriveRole.viewer => false,
+};
+
+/// The role this account has in [group], read from Telegram's own status
+/// and admin rights. Null when the account is no longer in it.
+DriveRole? roleOf(td.Supergroup group) => switch (group.status) {
+  td.ChatMemberStatusCreator() => DriveRole.owner,
+  td.ChatMemberStatusAdministrator(:final rights)
+      when rights.canPostMessages &&
+          rights.canEditMessages &&
+          rights.canDeleteMessages =>
+    DriveRole.editor,
+  td.ChatMemberStatusAdministrator() ||
+  td.ChatMemberStatusMember() => DriveRole.viewer,
+  _ => null,
 };
 
 /// What a person is told when they try to write to a drive they may only
