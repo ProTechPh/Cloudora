@@ -24,9 +24,16 @@ import 'support/fake_telegram.dart';
 /// An account whose channel has a one-month auto-delete timer, no public
 /// link, no two-step verification and a six-month inactivity timer.
 class _Telegram extends FakeTelegram {
-  _Telegram({this.passwordFails = false, this.slowAccount = false});
+  _Telegram({
+    this.passwordFails = false,
+    this.slowAccount = false,
+    this.status,
+  });
 
   final bool passwordFails;
+
+  /// The account's status in the drive channel, when it isn't the creator.
+  final td.ChatMemberStatus? status;
 
   /// Holds the account's two questions until the test answers them from
   /// [waiting].
@@ -58,7 +65,13 @@ class _Telegram extends FakeTelegram {
       case td.GetChat():
         return channelChat(autoDeleteSeconds: autoDelete);
       case td.GetSupergroup():
-        return ownedSupergroup(usernames: usernames);
+        return ownedSupergroup(usernames: usernames).copyWith(
+          status: status ?? const td.ChatMemberStatusCreator(
+            customTitle: '',
+            isAnonymous: false,
+            isMember: true,
+          ),
+        );
       case td.GetPasswordState():
         if (passwordFails) throw const TelegramException(500, 'Internal Server Error');
         return passwordState(hasPassword: false);
@@ -99,6 +112,26 @@ class _Backup extends BackupController {
   void schedule({bool immediate = false}) {}
 }
 
+/// The drive open with [role], as an invited phone has it.
+class _RoleSession extends DriveSessionNotifier {
+  _RoleSession(this.role);
+
+  final DriveRole role;
+
+  @override
+  DriveSession? build() => DriveSession(
+    userId: 1,
+    chatId: testChatId,
+    channelTitle: 'Cloudora',
+    firstName: 'A',
+    lastName: '',
+    phoneNumber: '',
+    username: null,
+    isPremium: false,
+    role: role,
+  );
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -121,19 +154,25 @@ void main() {
     bool slowAccount = false,
     bool driveOpen = true,
     Map<String, Object> stored = const {},
+    DriveRole role = DriveRole.owner,
+    td.ChatMemberStatus? status,
   }) async {
     // ignore: invalid_use_of_visible_for_testing_member
     SharedPreferences.setMockInitialValues(stored);
     final shared = await SharedPreferences.getInstance();
     final db = AppDatabase(NativeDatabase.memory());
-    final telegram = _Telegram(passwordFails: passwordFails, slowAccount: slowAccount);
+    final telegram = _Telegram(
+      passwordFails: passwordFails,
+      slowAccount: slowAccount,
+      status: status,
+    );
     final container = ProviderContainer(
       retry: (_, _) => null,
       overrides: [
         sharedPreferencesProvider.overrideWithValue(shared),
         appDatabaseProvider.overrideWithValue(db),
         telegramClientProvider.overrideWithValue(telegram),
-        if (driveOpen) driveSessionProvider.overrideWith(TestSession.new),
+        if (driveOpen) driveSessionProvider.overrideWith(() => _RoleSession(role)),
         driveSyncProvider.overrideWith(_Sync.new),
         backupControllerProvider.overrideWith(_Backup.new),
       ],
@@ -383,5 +422,40 @@ void main() {
     final trash = report.find<TrashFinding>()!;
     expect((trash.count, trash.dueSoon), (2, 1));
     expect(trash.severity, CheckSeverity.action);
+  });
+
+  td.ChatMemberStatus editorStatus() => td.ChatMemberStatusAdministrator(
+    customTitle: '',
+    canBeEdited: false,
+    rights: adminRights(canEdit: true),
+  );
+
+  test('an editor is told they share the drive, not told they lost it', () async {
+    final (container, _, _) = await open(
+      role: DriveRole.editor,
+      status: editorStatus(),
+    );
+    final keep = container.listen(driveCheckupProvider, (_, _) {});
+    addTearDown(keep.close);
+    final report = await container.read(driveCheckupProvider.future);
+
+    expect(report.find<RoleFinding>()!.role, DriveRole.editor);
+    expect(report.find<ChannelFinding>()!.error, isNull);
+  });
+
+  test('an editor\'s Make private does nothing', () async {
+    final (container, telegram, _) = await open(
+      role: DriveRole.editor,
+      status: editorStatus(),
+    );
+    final keep = container.listen(driveCheckupProvider, (_, _) {});
+    addTearDown(keep.close);
+    await container.read(driveCheckupProvider.future);
+
+    await container
+        .read(driveCheckupProvider.notifier)
+        .makePrivate(testSupergroupId);
+
+    expect(telegram.requests.whereType<td.SetSupergroupUsername>(), isEmpty);
   });
 }

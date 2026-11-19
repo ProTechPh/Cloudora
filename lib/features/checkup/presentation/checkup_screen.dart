@@ -104,6 +104,7 @@ class CheckupScreen extends ConsumerWidget {
   List<Widget> _rows(BuildContext context, WidgetRef ref, CheckFinding finding, SyncState sync) {
     final colors = context.colors;
     final checkup = ref.read(driveCheckupProvider.notifier);
+    final isOwner = ref.read(visibleSessionProvider)?.isOwner ?? true;
     Color tint(CheckSeverity severity) => switch (severity) {
       CheckSeverity.fine => colors.success,
       CheckSeverity.action => colors.danger,
@@ -154,7 +155,7 @@ class CheckupScreen extends ConsumerWidget {
               'Messages in your drive delete themselves after '
               '${Formatters.period(Duration(seconds: finding.autoDeleteSeconds))}',
               detail: 'Telegram\'s auto-delete timer is on for this channel.',
-              fixes: [fix('Turn off', checkup.turnOffAutoDelete)],
+              fixes: isOwner ? [fix('Turn off', checkup.turnOffAutoDelete)] : const [],
             ),
           ];
         }
@@ -165,8 +166,9 @@ class CheckupScreen extends ConsumerWidget {
               'Your drive channel is public',
               detail: 'Anyone with t.me/$name can see your files.',
               fixes: [
-                if (finding.supergroupId case final id?)
-                  fix('Make private', () => checkup.makePrivate(id)),
+                if (isOwner)
+                  if (finding.supergroupId case final id?)
+                    fix('Make private', () => checkup.makePrivate(id)),
               ],
             ),
           ];
@@ -176,6 +178,20 @@ class CheckupScreen extends ConsumerWidget {
             finding.severity,
             'Your drive channel is private and yours',
             detail: '$title · created by you',
+          ),
+        ];
+
+      case RoleFinding():
+        final viewer = finding.role == DriveRole.viewer;
+        return [
+          row(
+            finding.severity,
+            viewer
+                ? 'You can view and download files'
+                : 'You\'re an editor of a shared drive',
+            detail: viewer
+                ? 'Ask the owner to make you an editor.'
+                : 'Changes you make show on every phone.',
           ),
         ];
 
@@ -378,15 +394,16 @@ class CheckupScreen extends ConsumerWidget {
                 '${one ? 'It shows' : 'They show'} as an icon. Making previews fetches each and '
                 'sends it again · ${Formatters.bytes(finding.bytes)} each way.',
             fixes: [
-              TextButton(
-                onPressed: () => confirmMakePreviews(
-                  context,
-                  ref,
-                  (count: finding.count, bytes: finding.bytes),
-                  checkup.makePreviews,
+              if (ref.read(visibleSessionProvider)?.canEdit ?? true)
+                TextButton(
+                  onPressed: () => confirmMakePreviews(
+                    context,
+                    ref,
+                    (count: finding.count, bytes: finding.bytes),
+                    checkup.makePreviews,
+                  ),
+                  child: const Text('Make previews'),
                 ),
-                child: const Text('Make previews'),
-              ),
             ],
           ),
         ];

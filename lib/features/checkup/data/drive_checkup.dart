@@ -64,6 +64,18 @@ class ChannelFinding extends CheckFinding {
   CheckSeverity get severity => isFine ? CheckSeverity.fine : CheckSeverity.action;
 }
 
+/// What this account may do in a drive someone else owns: an editor can add
+/// and change files, a viewer can only look and download.
+@immutable
+class RoleFinding extends CheckFinding {
+  const RoleFinding(this.role);
+
+  final DriveRole role;
+
+  @override
+  CheckSeverity get severity => CheckSeverity.neutral;
+}
+
 /// When the channel was last read in full, and whether a read is running or
 /// the last one failed.
 @immutable
@@ -260,7 +272,7 @@ class DriveCheckup extends AsyncNotifier<CheckupReport> {
     if (session == null) throw driveNotOpen(ref.read(driveSnapshotProvider));
     // All asked at once: on a slow connection the questions to Telegram
     // would otherwise wait out their timeouts one after another.
-    final (channel, split, backup, trash, previews, twoStep, accountTtl) = await (
+    final ((channel, role), split, backup, trash, previews, twoStep, accountTtl) = await (
       _channel(session.chatId),
       _split(),
       _backup(),
@@ -271,6 +283,7 @@ class DriveCheckup extends AsyncNotifier<CheckupReport> {
     ).wait;
     final findings = <CheckFinding>[
       channel,
+      ?role,
       _index(session.chatId),
       ?split,
       backup,
@@ -284,31 +297,50 @@ class DriveCheckup extends AsyncNotifier<CheckupReport> {
     return CheckupReport(findings: findings, at: at);
   }
 
-  Future<ChannelFinding> _channel(int chatId) async {
+  Future<(ChannelFinding, RoleFinding?)> _channel(int chatId) async {
     try {
       final chat = await _client.send<td.Chat>(td.GetChat(chatId: chatId));
       int? supergroupId;
       var usernames = const <String>[];
+      RoleFinding? roleFinding;
       if (chat.type case td.ChatTypeSupergroup(supergroupId: final id)) {
         supergroupId = id;
-        final group = await _client.send<td.Supergroup>(td.GetSupergroup(supergroupId: id));
-        if (group.status is! td.ChatMemberStatusCreator) {
-          return const ChannelFinding.unreachable('This account no longer owns the channel.');
+        final group = await _client.send<td.Supergroup>(
+          td.GetSupergroup(supergroupId: id),
+        );
+        final role = roleOf(group);
+        if (role == null) {
+          return (
+            const ChannelFinding.unreachable(
+              'This account is no longer in the channel.',
+            ),
+            null,
+          );
         }
+        if (role != DriveRole.owner) roleFinding = RoleFinding(role);
         usernames = group.usernames?.activeUsernames ?? const [];
       }
       if (chat.messageAutoDeleteTime > 0) {
-        return ChannelFinding.autoDelete(chat.messageAutoDeleteTime, supergroupId: supergroupId);
+        return (
+          ChannelFinding.autoDelete(
+            chat.messageAutoDeleteTime,
+            supergroupId: supergroupId,
+          ),
+          roleFinding,
+        );
       }
       if (usernames.isNotEmpty) {
-        return ChannelFinding.public(usernames.first, supergroupId: supergroupId);
+        return (
+          ChannelFinding.public(usernames.first, supergroupId: supergroupId),
+          roleFinding,
+        );
       }
-      return ChannelFinding.ok(supergroupId: supergroupId);
+      return (ChannelFinding.ok(supergroupId: supergroupId), roleFinding);
     } on TelegramException catch (e) {
-      return ChannelFinding.unreachable(e.friendlyMessage);
+      return (ChannelFinding.unreachable(e.friendlyMessage), null);
     } catch (e) {
       debugPrint('[Checkup] channel: $e');
-      return const ChannelFinding.unreachable('Telegram didn\'t answer.');
+      return (const ChannelFinding.unreachable('Telegram didn\'t answer.'), null);
     }
   }
 
@@ -450,6 +482,7 @@ class DriveCheckup extends AsyncNotifier<CheckupReport> {
 
   /// Switches the channel's auto-delete timer off.
   Future<void> turnOffAutoDelete() async {
+    if (!_isOwner) return;
     final chatId = ref.read(driveSessionProvider)?.chatId;
     if (chatId == null) return;
     await _client.send<td.Ok>(
@@ -460,9 +493,13 @@ class DriveCheckup extends AsyncNotifier<CheckupReport> {
 
   /// Takes the channel's public link away.
   Future<void> makePrivate(int supergroupId) async {
+    if (!_isOwner) return;
     await _client.send<td.Ok>(td.SetSupergroupUsername(supergroupId: supergroupId, username: ''));
     if (ref.mounted) ref.invalidateSelf();
   }
+
+  /// Whether the channel's own settings are this account's to change.
+  bool get _isOwner => ref.read(driveSessionProvider)?.isOwner ?? false;
 
   /// Sets after how many days without activity Telegram deletes the account.
   Future<void> setAccountTtl(int days) => ref.read(accountTtlProvider.notifier).set(days);
