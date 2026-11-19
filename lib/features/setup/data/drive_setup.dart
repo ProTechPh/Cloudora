@@ -549,8 +549,10 @@ class DriveSetup extends Notifier<SetupState> {
     for (var page = 0; page < maxPages; page++) {
       try {
         await _client.send<td.Ok>(td.LoadChats(chatList: list, limit: 100));
-      } on TelegramException catch (e) {
-        if (e.code != 404) debugPrint('[DriveSetup] LoadChats: ${e.message}');
+      } catch (e) {
+        if (e is! TelegramException || e.code != 404) {
+          debugPrint('[DriveSetup] LoadChats: $e');
+        }
         return;
       }
     }
