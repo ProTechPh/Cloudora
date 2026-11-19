@@ -129,6 +129,9 @@ class SettingsScreen extends ConsumerWidget {
             children: [
               ListTile(
                 title: const Text('Photo backup'),
+                subtitle: ref.watch(driveCanEditProvider)
+                    ? null
+                    : const Text('Read-only drive'),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -385,12 +388,13 @@ class SettingsScreen extends ConsumerWidget {
                     ),
                   ),
                 ),
-              ListTile(
-                title: const Text('Private'),
-                subtitle: const Text('Folders that open only with your fingerprint, face or screen lock'),
-                trailing: Icon(Icons.chevron_right_rounded, color: colors.text3),
-                onTap: () => context.push('/private'),
-              ),
+              if (session != null && session.isOwner)
+                ListTile(
+                  title: const Text('Private'),
+                  subtitle: const Text('Folders that open only with your fingerprint, face or screen lock'),
+                  trailing: Icon(Icons.chevron_right_rounded, color: colors.text3),
+                  onTap: () => context.push('/private'),
+                ),
               ListTile(
                 title: const Text('This session'),
                 subtitle: Text(

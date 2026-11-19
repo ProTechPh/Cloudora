@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:handy_tdlib/api.dart' as td;
 
 import '../../../infrastructure/storage/preferences.dart';
+import '../../../infrastructure/telegram/telegram_client.dart';
 
 /// What this account may do in the drive, read from Telegram's own
 /// membership and admin rights rather than kept by Cloudora.
@@ -211,3 +212,23 @@ final visibleSessionProvider = Provider<DriveSession?>(
 final driveCanEditProvider = Provider<bool>(
   (ref) => ref.watch(visibleSessionProvider)?.canEdit ?? true,
 );
+
+/// Whether the drive channel has more than one member, which makes
+/// Private's promise a weaker one. False while unknown.
+final driveIsSharedProvider = FutureProvider<bool>((ref) async {
+  final session = ref.watch(visibleSessionProvider);
+  if (session == null) return false;
+  try {
+    final client = ref.read(telegramClientProvider);
+    final chat = await client.send<td.Chat>(td.GetChat(chatId: session.chatId));
+    if (chat.type case td.ChatTypeSupergroup(supergroupId: final id)) {
+      final group = await client.send<td.Supergroup>(
+        td.GetSupergroup(supergroupId: id),
+      );
+      return group.memberCount > 1;
+    }
+  } catch (e) {
+    debugPrint('[DriveSession] Could not read the member count: $e');
+  }
+  return false;
+});

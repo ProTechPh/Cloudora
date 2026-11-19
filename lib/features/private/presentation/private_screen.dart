@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../app/theme/tokens.dart';
 import '../../../core/widgets/common.dart';
+import '../../drive/data/drive_session.dart';
 import '../../files/presentation/file_actions.dart';
 import '../../files/presentation/file_tiles.dart';
 import '../../lock/data/app_lock.dart';
@@ -35,8 +36,27 @@ class PrivateScreen extends ConsumerWidget {
             ),
           ],
         ),
-        body: AsyncView(
-          value: folders,
+        body: Column(
+          children: [
+            if (ref.watch(driveIsSharedProvider).value ?? false)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  Space.gutter,
+                  Space.s,
+                  Space.gutter,
+                  0,
+                ),
+                child: Text(
+                  'In a shared drive, Private hides these from Cloudora only. '
+                  'Telegram still shows them to everyone.',
+                  style: context.text.bodySmall?.copyWith(
+                    color: context.colors.text2,
+                  ),
+                ),
+              ),
+            Expanded(
+              child: AsyncView(
+                value: folders,
           data: (folders) => folders.isEmpty
               ? const EmptyState(
                   title: 'Nothing is private yet',
@@ -68,6 +88,9 @@ class PrivateScreen extends ConsumerWidget {
                       ),
                   ],
                 ),
+              ),
+            ),
+          ],
         ),
       ),
     );

@@ -552,6 +552,7 @@ class BackupController extends Notifier<BackupState> {
   /// Asks for photo access and starts backing up. Returns false if access
   /// was refused.
   Future<bool> enable() async {
+    if (!ref.read(driveCanEditProvider)) return false;
     final permission = await PhotoManager.requestPermissionExtend(
       requestOption: permissionOption,
     );

@@ -113,4 +113,22 @@ void main() {
     expect(find.text('Invite people'), findsNothing);
     expect(find.text('Switch drive'), findsOneWidget);
   });
+
+  testWidgets('a viewer is not offered Private or photo backup', (
+    tester,
+  ) async {
+    await pumpSettings(tester, DriveRole.viewer);
+    expect(find.text('Private'), findsNothing);
+    expect(find.text('Read-only drive'), findsOneWidget);
+  });
+
+  testWidgets('an owner keeps Private', (tester) async {
+    await pumpSettings(tester, DriveRole.owner);
+    expect(find.text('Private'), findsOneWidget);
+  });
+
+  testWidgets('an editor is not offered Private either', (tester) async {
+    await pumpSettings(tester, DriveRole.editor);
+    expect(find.text('Private'), findsNothing);
+  });
 }
